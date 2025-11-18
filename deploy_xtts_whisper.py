@@ -99,6 +99,8 @@ async def boot(self):
             gpu_flags = ["--gpus", override_gpus]
         elif shutil.which("nvidia-smi"):
             gpu_flags = ["--gpus", "all"]
+            if os.path.exists("/usr/bin/nvidia-container-runtime"):
+                gpu_flags.extend(["--runtime", "nvidia"])
         cmd = [
             "docker",
             "run",
