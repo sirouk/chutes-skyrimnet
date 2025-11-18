@@ -27,6 +27,7 @@ async def wait_for_port(port: int, host: str = LOCAL_HOST, timeout: int = 240) -
                 raise RuntimeError(f"Timed out waiting for {host}:{port}")
             await asyncio.sleep(2)
 
+
 image = (
     Image(
         username=USERNAME,
@@ -81,11 +82,11 @@ async def shutdown(self):
 
 
 @chute.cord(
-    public_api_path="/speakers/",
+    public_api_path="/speakers",
     public_api_method="GET",
     passthrough=True,
     passthrough_port=XTTS_PORT,
-    passthrough_path="/speakers/",
+    passthrough_path="/speakers",
 )
 async def speakers(self): ...
 

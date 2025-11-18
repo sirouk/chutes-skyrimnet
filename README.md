@@ -20,23 +20,25 @@ Chutes cords. Nothing is re-implemented inside this repo; we simply forward requ
 
 - **XTTS + Whisper** (`deploy_xtts_whisper.py`)
   - Ports 8020 (XTTS FastAPI) + 8080 (Whisper.cpp)
-  - Cords: `GET /speakers/`, `/speakers_list`, `/languages`, `/get_folders`,
-    `/get_models_list`, `/get_tts_settings`, `/sample/{file_path}`, `GET /tts_stream`,
-    `POST /set_output`, `/set_speaker_folder`, `/switch_model`, `/set_tts_settings`,
+  - Every FastAPI route provided by `xtts_api_server` is exposed via passthrough cords:
+    `/speakers`, `/speakers_list`, `/languages`, `/get_folders`,
+    `/get_models_list`, `/get_tts_settings`, `/sample/{file_path}`, `/set_output`,
+    `/set_speaker_folder`, `/switch_model`, `/set_tts_settings`, `/tts_stream`,
     `/tts_to_audio/`, `/tts_to_file`, `/create_latents`, `/store_latents`,
-    `/create_and_store_latents`, `POST /v1/audio/transcriptions`
+    `/create_and_store_latents`, plus Whisper’s `POST /v1/audio/transcriptions`.
 
 - **VibeVoice + Whisper** (`deploy_vibevoice_whisper.py`)
   - Ports 7860 (Gradio wrapper) + 8080 (Whisper.cpp)
-  - Cords: `POST /api/generate_audio`, `POST /queue/join`, `POST /queue/status`, `POST /v1/audio/transcriptions`
+  - Passthrough cords: `POST /api/generate_audio`, `/queue/join`, `/queue/status`,
+    `/v1/audio/transcriptions`
 
 - **Higgs Audio + Whisper** (`deploy_higgs_whisper.py`)
-  - Same Gradio/queue cord set as VibeVoice (`/api/generate_audio`, `/queue/*`, `/v1/audio/transcriptions`)
+  - Same passthrough set as VibeVoice (`/api/generate_audio`, `/queue/*`, `/v1/audio/transcriptions`)
 
 - **Zonos + Whisper** (`deploy_zonos_whisper.py`)
   - Ports 7860 (Blocks UI) + 8080 (Whisper.cpp)
-  - Cords: `POST /api/generate_audio`, `POST /api/predict/`, `POST /queue/join`, `POST /queue/status`,
-    `GET /file?path=...`, `POST /v1/audio/transcriptions`
+  - Passthrough cords: `POST /api/generate_audio`, `/api/predict/`, `/queue/join`,
+    `/queue/status`, `GET /file`, `POST /v1/audio/transcriptions`
 
 Since we do not mutate payloads, keep sending the **exact JSON / multipart bodies** that the vendor
 servers expect (e.g., Gradio queue payloads, Whisper form uploads, etc.).
