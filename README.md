@@ -153,9 +153,3 @@ Run `chutes --help` or check the upstream docs for the full command set.
 - **Remote imports**: already handled—each deploy script inlines everything required.
 
 ---
-
-## License
-
-See `LICENSE`.
-
-# chutes-skyrimnet
