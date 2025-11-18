@@ -1,9 +1,7 @@
 import asyncio
 import os
 import signal
-import shutil
 import subprocess
-from typing import Optional
 
 from chutes.chute import Chute, NodeSelector
 from chutes.image import Image
@@ -13,7 +11,6 @@ ENTRYPOINT = os.getenv("HIGGS_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh"
 SERVICE_PORT = int(os.getenv("HIGGS_HTTP_PORT", "7860"))
 WHISPER_PORT = int(os.getenv("HIGGS_WHISPER_PORT", "8080"))
 LOCAL_HOST = "127.0.0.1"
-VENDOR_IMAGE = os.getenv("HIGGS_VENDOR_IMAGE", "elbios/higgs-whisper:latest")
 
 
 async def wait_for_port(port: int, host: str = LOCAL_HOST, timeout: int = 300) -> None:
@@ -65,48 +62,7 @@ This chute launches `elbios/higgs-whisper:latest` and exposes the upstream Gradi
 
 @chute.on_startup()
 async def boot(self):
-    self._entrypoint_proc: Optional[subprocess.Popen[bytes]] = None
-    self._entrypoint_container: Optional[str] = None
-    if os.path.exists(ENTRYPOINT):
-        self._entrypoint_proc = subprocess.Popen(["bash", "-lc", ENTRYPOINT])
-    else:
-        container_name = f"higgs-dev-{os.getpid()}"
-        self._entrypoint_container = container_name
-        env_flags = []
-        for key in [
-            "HIGGS_HTTP_PORT",
-            "HIGGS_WHISPER_PORT",
-            "HIGGS_MODEL_ID",
-            "HIGGS_AUDIO_TOKENIZER",
-            "CUDA_VISIBLE_DEVICES",
-            "NVIDIA_VISIBLE_DEVICES",
-        ]:
-            value = os.getenv(key)
-            if value is not None:
-                env_flags.extend(["-e", f"{key}={value}"])
-        gpu_flags: list[str] = []
-        override = os.getenv("HIGGS_DEV_GPUS")
-        if override:
-            gpu_flags = ["--gpus", override]
-        elif shutil.which("nvidia-smi"):
-            gpu_flags = ["--gpus", "all"]
-            if os.path.exists("/usr/bin/nvidia-container-runtime"):
-                gpu_flags.extend(["--runtime", "nvidia"])
-        cmd = [
-            "docker",
-            "run",
-            "--rm",
-            "--name",
-            container_name,
-            *gpu_flags,
-            "-p",
-            f"{SERVICE_PORT}:{SERVICE_PORT}",
-            "-p",
-            f"{WHISPER_PORT}:{WHISPER_PORT}",
-            *env_flags,
-            VENDOR_IMAGE,
-        ]
-        self._entrypoint_proc = subprocess.Popen(cmd)
+    self._entrypoint_proc = subprocess.Popen(["bash", "-lc", ENTRYPOINT])
     await wait_for_port(SERVICE_PORT)
     await wait_for_port(WHISPER_PORT)
 
@@ -120,9 +76,6 @@ async def shutdown(self):
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
-    container = getattr(self, "_entrypoint_container", None)
-    if container:
-        subprocess.run(["docker", "kill", container], check=False)
 
 
 @chute.cord(

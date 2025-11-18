@@ -43,11 +43,6 @@ Chutes cords. Nothing is re-implemented inside this repo; we simply forward requ
   - Passthrough cords: `POST /api/generate_audio`, `/api/predict/`, `/queue/join`,
     `/queue/status`, `GET /file`, `POST /v1/audio/transcriptions`
 
-> **Docker fallback:** If the vendor entrypoint script is missing on your host during local `chutes run`,
-> each deploy script automatically `docker run`s the corresponding `elbios/*` image (publishing the HTTP
-> ports and requesting GPU access via `--gpus`/`--runtime nvidia`). Set `*_DEV_GPUS` to pin specific GPUs
-> or override `*_VENDOR_IMAGE` to test a different tag.
-
 Most cords use Chutes’ native **passthrough** mode, so requests go straight to the vendor process already
 running inside the Docker image. The lone exception is the XTTS sample-download endpoint
 (`/sample/{file_path}`), which needs a tiny helper because of its path wildcard; that helper still forwards
