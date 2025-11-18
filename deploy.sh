@@ -42,25 +42,25 @@ chutes build deploy_xtts_whisper:chute --local --debug
 # RUN THE CHUTE LOCALLY (FOR TESTING)
 # ============================================================================
 
-# Run in dev mode with sample data before touching remote infra
-cat > test_job.json << 'EOF'
+# Prepare a sample /speak payload for curl-based testing
+cat > speak_payload.json << 'EOF'
 {
-  "method": "/speak",
-  "payload": {
-    "text": "Welcome to SkyrimNet private chutes!",
-    "language": "en",
-    "cfg_scale": 1.3
-  }
+  "text": "Welcome to SkyrimNet private chutes!",
+  "language": "en",
+  "cfg_scale": 1.3
 }
 EOF
 
-echo "Testing XTTS chute locally..."
-chutes run deploy_xtts_whisper:chute \
-    --dev \
-    --dev-job-data-path test_job.json \
-    --dev-job-method cord \
-    --port 8000 \
-    --debug
+echo "Launch the chute locally (Ctrl+C to stop) from a separate shell:"
+echo "  chutes run deploy_xtts_whisper:chute --dev --port 8000 --debug"
+
+echo "With the dev server running, test /speak using curl (saves output.wav):"
+curl -sS -X POST http://127.0.0.1:8000/speak \
+    -H "Content-Type: application/json" \
+    --data @speak_payload.json \
+    --output output.wav
+
+echo "To hit /transcribe locally, change the payload to include base64 audio and POST to /transcribe."
 
 # For production run (connects to validators):
 # chutes run deploy_xtts_whisper:chute \

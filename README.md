@@ -58,7 +58,7 @@ ZONOS_MODEL_ID=...
 3. **Local validation (optional)**:
    ```bash
    chutes build deploy_xtts_whisper:chute --local --debug
-   chutes run deploy_xtts_whisper:chute --dev --dev-job-data-path test_job.json
+   chutes run deploy_xtts_whisper:chute --dev --port 8000 --debug
    ```
    Local builds exec `/usr/bin/docker`. On macOS, symlink `/usr/local/bin/docker` → `/usr/bin/docker` if missing.
 4. **Remote build** (required before deploy):
@@ -75,6 +75,31 @@ ZONOS_MODEL_ID=...
    Use the other CLI commands as needed (`chutes report`, `chutes warmup`, etc.).
 
 `deploy.sh` contains the ordered shell sequence (study → local build → local run → remote build → deploy). `setup.sh` explains registration with sanitized instructions.
+
+---
+
+## Local dev testing
+
+```bash
+cat > speak_payload.json <<'EOF'
+{
+  "text": "Welcome to SkyrimNet private chutes!",
+  "language": "en",
+  "cfg_scale": 1.3
+}
+EOF
+
+# terminal 1 (Ctrl+C to stop)
+chutes run deploy_xtts_whisper:chute --dev --port 8000 --debug
+
+# terminal 2 (while the chute runs)
+curl -sS -X POST http://127.0.0.1:8000/speak \
+     -H "Content-Type: application/json" \
+     --data @speak_payload.json \
+     --output output.wav
+```
+
+Swap the payload and endpoint to exercise `/transcribe`. When satisfied, stop the dev server with `Ctrl+C`.
 
 ---
 
