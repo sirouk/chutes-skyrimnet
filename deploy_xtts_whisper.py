@@ -2,6 +2,10 @@ import asyncio
 import os
 import signal
 import subprocess
+from typing import Dict
+
+import httpx
+from fastapi import HTTPException, Request, Response
 
 from chutes.chute import Chute, NodeSelector
 from chutes.image import Image
@@ -11,6 +15,8 @@ ENTRYPOINT = os.getenv("XTTS_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh")
 XTTS_PORT = int(os.getenv("XTTS_HTTP_PORT", "8020"))
 WHISPER_PORT = int(os.getenv("XTTS_WHISPER_PORT", "8080"))
 LOCAL_HOST = "127.0.0.1"
+XTTS_BASE = f"http://{LOCAL_HOST}:{XTTS_PORT}"
+WHISPER_BASE = f"http://{LOCAL_HOST}:{WHISPER_PORT}"
 
 
 async def wait_for_port(port: int, host: str = LOCAL_HOST, timeout: int = 240) -> None:
@@ -141,15 +147,64 @@ async def models_list(self): ...
 async def tts_settings(self): ...
 
 
+def _strip_hop_headers(headers: Dict[str, str]) -> Dict[str, str]:
+    hop_headers = {
+        "host",
+        "content-length",
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+        "transfer-encoding",
+        "upgrade",
+        "accept-encoding",
+    }
+    return {k: v for k, v in headers.items() if k.lower() not in hop_headers}
+
+
+def _append_query(url: str, request: Request) -> str:
+    if not request.url.query:
+        return url
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}{request.url.query}"
+
+
+async def _proxy_request(request: Request, target_url: str) -> Response:
+    headers = _strip_hop_headers(dict(request.headers))
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+            resp = await client.request(
+                method=request.method,
+                url=target_url,
+                headers=headers,
+                content=await request.body(),
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"XTTS passthrough failed: {exc}"
+        ) from exc
+    return Response(
+        content=resp.content,
+        status_code=resp.status_code,
+        media_type=resp.headers.get("content-type"),
+        headers={
+            key: value
+            for key, value in resp.headers.items()
+            if key.lower() in {"content-type", "content-length"}
+        },
+    )
+
+
 @chute.cord(
     public_api_path="/sample/{file_path:path}",
     public_api_method="GET",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/sample/{file_path:path}",
     output_content_type="audio/wav",
 )
-async def sample(self): ...
+async def sample(self, request: Request, file_path: str):
+    target = _append_query(f"{XTTS_BASE}/sample/{file_path}", request)
+    return await _proxy_request(request, target)
 
 
 @chute.cord(

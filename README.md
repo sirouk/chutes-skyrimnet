@@ -40,18 +40,11 @@ Chutes cords. Nothing is re-implemented inside this repo; we simply forward requ
   - Passthrough cords: `POST /api/generate_audio`, `/api/predict/`, `/queue/join`,
     `/queue/status`, `GET /file`, `POST /v1/audio/transcriptions`
 
-Since we do not mutate payloads, keep sending the **exact JSON / multipart bodies** that the vendor
-servers expect (e.g., Gradio queue payloads, Whisper form uploads, etc.).
-
-> **Input validation & proxying:** Each JSON cord now passes through a
-`pydantic.BaseModel` so we reject malformed payloads (non-object JSON, missing
-required keys) before hitting the vendor server, while still forwarding fields
-verbatim. Multipart Whisper uploads continue to go straight through to avoid
-touching binary bodies. We proxy every request rather than re-implementing the
-vendor FastAPI/Gradio apps; the entrypoint inside each Docker image already
-launches those services, and our cords simply forward traffic (with minimal
-header cleanup, timeouts, and validation) to the processes listening on
-localhost:7860/8020/8080.
+Most cords use Chutes’ native **passthrough** mode, so requests go straight to the vendor process already
+running inside the Docker image. The lone exception is the XTTS sample-download endpoint
+(`/sample/{file_path}`), which needs a tiny helper because of its path wildcard; that helper still forwards
+the payload verbatim. Either way, keep sending the **exact JSON / multipart bodies** those services
+document (Gradio queue payloads, Whisper form uploads, etc.).
 
 Environment variables (`env.example` → `.env`):
 ```
