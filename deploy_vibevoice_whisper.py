@@ -222,7 +222,7 @@ Endpoints:
 2. `POST /transcribe`
 """,
     image=image,
-    node_selector=NodeSelector(gpu_count=1, min_vram_gb_per_gpu=24, include=GPU_PREFERENCE),
+    node_selector=NodeSelector(gpu_count=1, min_vram_gb_per_gpu=24, include=["h100", "h100_sxm", "h200"]),
     concurrency=1,
     allow_external_egress=True,
     shutdown_after_seconds=3600,

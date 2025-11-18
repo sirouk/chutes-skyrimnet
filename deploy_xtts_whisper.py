@@ -223,7 +223,7 @@ Endpoints:
 2. `POST /transcribe` &mdash; transcribe / translate arbitrary audio
 """,
     image=image,
-    node_selector=NodeSelector(gpu_count=1, min_vram_gb_per_gpu=16, include=GPU_PREFERENCE),
+    node_selector=NodeSelector(gpu_count=1, min_vram_gb_per_gpu=16, include=["h100", "h200", "b200"]),
     concurrency=2,
     allow_external_egress=True,
     shutdown_after_seconds=3600,
