@@ -1,6 +1,7 @@
 import asyncio
 import os
 import signal
+import shutil
 import subprocess
 from typing import Dict, Optional
 from urllib.parse import urlencode
@@ -86,16 +87,25 @@ async def boot(self):
             "MAX_IDLE_SECONDS",
             "XTTS_HTTP_PORT",
             "XTTS_WHISPER_PORT",
+            "CUDA_VISIBLE_DEVICES",
+            "NVIDIA_VISIBLE_DEVICES",
         ]:
             value = os.getenv(key)
             if value is not None:
                 env_flags.extend(["-e", f"{key}={value}"])
+        gpu_flags: list[str] = []
+        override_gpus = os.getenv("XTTS_DEV_GPUS")
+        if override_gpus:
+            gpu_flags = ["--gpus", override_gpus]
+        elif shutil.which("nvidia-smi"):
+            gpu_flags = ["--gpus", "all"]
         cmd = [
             "docker",
             "run",
             "--rm",
             "--name",
             container_name,
+            *gpu_flags,
             "-p",
             f"{XTTS_PORT}:{XTTS_PORT}",
             "-p",
