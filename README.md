@@ -20,7 +20,11 @@ Chutes cords. Nothing is re-implemented inside this repo; we simply forward requ
 
 - **XTTS + Whisper** (`deploy_xtts_whisper.py`)
   - Ports 8020 (XTTS FastAPI) + 8080 (Whisper.cpp)
-  - Cords: `GET /speakers/`, `POST /tts_to_audio/`, `POST /v1/audio/transcriptions`
+  - Cords: `GET /speakers/`, `/speakers_list`, `/languages`, `/get_folders`,
+    `/get_models_list`, `/get_tts_settings`, `/sample/{file_path}`, `GET /tts_stream`,
+    `POST /set_output`, `/set_speaker_folder`, `/switch_model`, `/set_tts_settings`,
+    `/tts_to_audio/`, `/tts_to_file`, `/create_latents`, `/store_latents`,
+    `/create_and_store_latents`, `POST /v1/audio/transcriptions`
 
 - **VibeVoice + Whisper** (`deploy_vibevoice_whisper.py`)
   - Ports 7860 (Gradio wrapper) + 8080 (Whisper.cpp)

@@ -2,10 +2,11 @@ import asyncio
 import os
 import signal
 import subprocess
-from typing import Dict
+from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import HTTPException, Request, Response
+from pydantic import BaseModel
 
 from chutes.chute import Chute, NodeSelector
 from chutes.image import Image
@@ -51,15 +52,23 @@ def _strip_hop_headers(headers: Dict[str, str]) -> Dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in hop_headers}
 
 
+def _append_query(target_url: str, request: Request) -> str:
+    if not request.url.query:
+        return target_url
+    separator = "&" if "?" in target_url else "?"
+    return f"{target_url}{separator}{request.url.query}"
+
+
 async def proxy_request(request: Request, target_url: str) -> Response:
     """Forward the incoming FastAPI request to the local vendor service."""
     body = await request.body()
     headers = _strip_hop_headers(dict(request.headers))
+    url = _append_query(target_url, request)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
             resp = await client.request(
                 method=request.method,
-                url=target_url,
+                url=url,
                 content=body if body else None,
                 headers=headers,
             )
@@ -91,6 +100,60 @@ async def fetch_json(url: str) -> Dict:
         raise HTTPException(
             status_code=502, detail=f"XTTS control plane unavailable: {exc}"
         ) from exc
+
+
+async def forward_xtts_json(path: str, payload: BaseModel) -> Dict[str, Any]:
+    url = f"{XTTS_BASE}{path}"
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
+            resp = await client.post(url, json=payload.model_dump())
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"XTTS control plane unavailable: {exc}"
+        ) from exc
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    content_type = resp.headers.get("content-type", "")
+    if "application/json" in content_type:
+        return resp.json()
+    return {"status_code": resp.status_code, "body": resp.text}
+
+
+class OutputFolderPayload(BaseModel):
+    output_folder: str
+
+
+class SpeakerFolderPayload(BaseModel):
+    speaker_folder: str
+
+
+class ModelNamePayload(BaseModel):
+    model_name: str
+
+
+class TTSSettingsPayload(BaseModel):
+    stream_chunk_size: int
+    temperature: float
+    speed: float
+    length_penalty: float
+    repetition_penalty: float
+    top_p: float
+    top_k: int
+    enable_text_splitting: bool
+
+
+class SynthesisFilePayload(BaseModel):
+    text: str
+    language: str
+    file_name_or_path: str
+    speaker_wav: Optional[str] = None
+    save_path: Optional[str] = None
+
+
+class StoreLatentsPayload(BaseModel):
+    speaker_name: str
+    language: str
+    latents: Dict[str, Any]
 
 
 image = (
@@ -151,6 +214,60 @@ async def speakers(self):
     return await fetch_json(f"{XTTS_BASE}/speakers/")
 
 
+@chute.cord(public_api_path="/speakers_list", public_api_method="GET")
+async def speakers_list(self):
+    return await fetch_json(f"{XTTS_BASE}/speakers_list")
+
+
+@chute.cord(public_api_path="/languages", public_api_method="GET")
+async def languages(self):
+    return await fetch_json(f"{XTTS_BASE}/languages")
+
+
+@chute.cord(public_api_path="/get_folders", public_api_method="GET")
+async def folders(self):
+    return await fetch_json(f"{XTTS_BASE}/get_folders")
+
+
+@chute.cord(public_api_path="/get_models_list", public_api_method="GET")
+async def models_list(self):
+    return await fetch_json(f"{XTTS_BASE}/get_models_list")
+
+
+@chute.cord(public_api_path="/get_tts_settings", public_api_method="GET")
+async def tts_settings(self):
+    return await fetch_json(f"{XTTS_BASE}/get_tts_settings")
+
+
+@chute.cord(
+    public_api_path="/sample/{file_path:path}",
+    public_api_method="GET",
+    output_content_type="audio/wav",
+)
+async def sample(self, request: Request, file_path: str) -> Response:
+    return await proxy_request(request, f"{XTTS_BASE}/sample/{file_path}")
+
+
+@chute.cord(public_api_path="/set_output", public_api_method="POST")
+async def set_output(self, payload: OutputFolderPayload):
+    return await forward_xtts_json("/set_output", payload)
+
+
+@chute.cord(public_api_path="/set_speaker_folder", public_api_method="POST")
+async def set_speaker_folder(self, payload: SpeakerFolderPayload):
+    return await forward_xtts_json("/set_speaker_folder", payload)
+
+
+@chute.cord(public_api_path="/switch_model", public_api_method="POST")
+async def switch_model(self, payload: ModelNamePayload):
+    return await forward_xtts_json("/switch_model", payload)
+
+
+@chute.cord(public_api_path="/set_tts_settings", public_api_method="POST")
+async def set_tts_settings(self, payload: TTSSettingsPayload):
+    return await forward_xtts_json("/set_tts_settings", payload)
+
+
 @chute.cord(
     public_api_path="/tts_to_audio/",
     public_api_method="POST",
@@ -158,6 +275,43 @@ async def speakers(self):
 )
 async def tts_to_audio(self, request: Request) -> Response:
     return await proxy_request(request, f"{XTTS_BASE}/tts_to_audio/")
+
+
+@chute.cord(public_api_path="/tts_to_file", public_api_method="POST")
+async def tts_to_file(self, payload: SynthesisFilePayload):
+    return await forward_xtts_json("/tts_to_file", payload)
+
+
+@chute.cord(
+    public_api_path="/tts_stream",
+    public_api_method="GET",
+    output_content_type="audio/x-wav",
+)
+async def tts_stream(self, request: Request) -> Response:
+    return await proxy_request(request, f"{XTTS_BASE}/tts_stream")
+
+
+@chute.cord(
+    public_api_path="/create_latents",
+    public_api_method="POST",
+    output_content_type="application/json",
+)
+async def create_latents(self, request: Request) -> Response:
+    return await proxy_request(request, f"{XTTS_BASE}/create_latents")
+
+
+@chute.cord(public_api_path="/store_latents", public_api_method="POST")
+async def store_latents(self, payload: StoreLatentsPayload):
+    return await forward_xtts_json("/store_latents", payload)
+
+
+@chute.cord(
+    public_api_path="/create_and_store_latents",
+    public_api_method="POST",
+    output_content_type="application/json",
+)
+async def create_and_store_latents(self, request: Request) -> Response:
+    return await proxy_request(request, f"{XTTS_BASE}/create_and_store_latents")
 
 
 @chute.cord(public_api_path="/v1/audio/transcriptions", public_api_method="POST")
