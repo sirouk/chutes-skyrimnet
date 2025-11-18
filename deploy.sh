@@ -27,7 +27,7 @@ cat $HOME/.chutes/config.ini | grep username
 # Study the reference chute modules (deploy_xtts_whisper.py, deploy_vibevoice_whisper.py, etc.)
 #   - Confirm each base image and `.run_command` block matches upstream Docker or HF instructions
 #   - Note GPU/disk/env requirements declared near the top (XTTS_MODEL_ID, WHISPER_MODEL, etc.)
-#   - Ensure `/speak` + `/transcribe` schemas in `tts_shared.py` align with partner requirements
+#   - Review the inline `/speak` + `/transcribe` schemas baked into each file (no shared helper now)
 #   - Capture model-specific quirks (VibeVoice script formatting, Higgs temperature defaults) inside README notes
 
 # Build at least one chute locally before touching remote infra (no $50 balance needed)
@@ -45,23 +45,25 @@ chutes build deploy_xtts_whisper:chute --local --debug
 # Run in dev mode with sample data before touching remote infra
 cat > test_job.json << 'EOF'
 {
-    "data": "test input data",
-    "params": {
-        "key": "value"
-    }
+  "method": "/speak",
+  "payload": {
+    "text": "Welcome to SkyrimNet private chutes!",
+    "language": "en",
+    "cfg_scale": 1.3
+  }
 }
 EOF
 
-echo "Testing chute locally..."
-chutes run example_chute:app \
+echo "Testing XTTS chute locally..."
+chutes run deploy_xtts_whisper:chute \
     --dev \
     --dev-job-data-path test_job.json \
-    --dev-job-method process \
+    --dev-job-method cord \
     --port 8000 \
     --debug
 
 # For production run (connects to validators):
-# chutes run example_chute:app \
+# chutes run deploy_xtts_whisper:chute \
 #     --miner-ss58 <your_miner_ss58> \
 #     --validator-ss58 <validator_ss58> \
 #     --port 8000
@@ -80,8 +82,8 @@ echo "Reminder: account must also have >= \$50 USD balance before remote builds/
 
 # Deploy with fee acceptance
 # The --accept-fee flag acknowledges deployment costs
-echo "Deploying chute..."
-chutes deploy example_chute:app --accept-fee --debug
+echo "Deploying XTTS chute..."
+chutes deploy deploy_xtts_whisper:chute --accept-fee --debug
 
 # Deployment prerequisites checklist:
 # 1. Remote image build completed (non-local)
@@ -89,7 +91,7 @@ chutes deploy example_chute:app --accept-fee --debug
 # 3. Use --accept-fee to acknowledge validator costs
 
 # For public deployment (available to anyone):
-# chutes deploy example_chute:app --accept-fee --public
+# chutes deploy deploy_xtts_whisper:chute --accept-fee --public
 
 
 # ============================================================================
@@ -101,8 +103,8 @@ echo "Listing deployed chutes..."
 chutes chutes list
 
 # Get specific chute details
-# Replace 'example_chute_name' with your actual chute name
-chutes chutes get example_chute_name
+# Replace 'xtts-whisper' with your actual chute name if different
+chutes chutes get xtts-whisper
 
 
 
@@ -111,7 +113,7 @@ chutes chutes get example_chute_name
 # ============================================================================
 
 # Pre-warm the chute for faster initial response times
-# chutes warmup example_chute:app
+# chutes warmup deploy_xtts_whisper:chute
 
 
 # ============================================================================
@@ -119,7 +121,7 @@ chutes chutes get example_chute_name
 # ============================================================================
 
 # Share your chute with other users
-# chutes share example_chute:app --with-user <username>
+# chutes share deploy_xtts_whisper:chute --with-user <username>
 
 
 # ============================================================================
@@ -131,7 +133,7 @@ chutes chutes get example_chute_name
 
 # Delete a chute when no longer needed
 # WARNING: This is permanent!
-# chutes chutes delete example_chute_name
+# chutes chutes delete xtts-whisper
 
 
 # ============================================================================
