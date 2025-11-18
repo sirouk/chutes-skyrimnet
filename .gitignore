@@ -27,3 +27,5 @@ build/
 .idea/
 .vscode/
 
+# Chutes Repo
+chutes/

@@ -8,45 +8,61 @@ Concise guide for the SkyrimNet TTS/STT chute bundle. Everything important lives
 
 | Module | Description | Suggested GPU | Build command |
 | --- | --- | --- | --- |
-| `deploy_xtts_whisper.py` | Coqui XTTS v2 voice cloning + Whisper STT. | ≥16 GB VRAM | `chutes build deploy_xtts_whisper:chute --wait` |
-| `deploy_vibevoice_whisper.py` | VibeVoice-1.5B long-form dialogue (multi-speaker). | ≥24 GB VRAM | `chutes build deploy_vibevoice_whisper:chute --wait` |
-| `deploy_higgs_whisper.py` | Boson Higgs Audio v2 expressive narration. | ≥32 GB VRAM | `chutes build deploy_higgs_whisper:chute --wait` |
-| `deploy_zonos_whisper.py` | Zyphra Zonos v0.1 hybrid multilingual cloning. | ≥24 GB VRAM | `chutes build deploy_zonos_whisper:chute --wait` |
+| `deploy_xtts_whisper.py` | Wrapper for `elbios/xtts-whisper:latest` (Coqui XTTS + Whisper.cpp). | ≥16 GB VRAM | `chutes build deploy_xtts_whisper:chute --wait` |
+| `deploy_vibevoice_whisper.py` | Wrapper for `elbios/vibevoice-whisper:latest` (VibeVoice + Whisper.cpp). | ≥24 GB VRAM | `chutes build deploy_vibevoice_whisper:chute --wait` |
+| `deploy_higgs_whisper.py` | Wrapper for `elbios/higgs-whisper:latest` (Boson Higgs Audio + Whisper.cpp). | ≥32 GB VRAM | `chutes build deploy_higgs_whisper:chute --wait` |
+| `deploy_zonos_whisper.py` | Wrapper for `elbios/zonos-whisper:latest` (Zyphra Zonos + Whisper.cpp). | ≥24 GB VRAM | `chutes build deploy_zonos_whisper:chute --wait` |
 
-All chutes expose:
-- `POST /speak` → returns `{ audio_b64, sample_rate, duration_seconds, meta }`
-- `POST /transcribe` → Whisper transcript/segments metadata
+Each chute now **starts the upstream Docker image verbatim** and exposes its HTTP API through thin
+Chutes cords. Nothing is re-implemented inside this repo; we simply forward requests/responses.
 
-### Image / runtime notes
+### Runtime summary / exposed cords
 
-- **XTTS + Whisper**:
-  - *Image*: base Python 3.11.9 image with `ffmpeg`, `espeak-ng`, and Python deps (`TTS`, `torch/torchaudio`, `faster-whisper`, `librosa`, `soundfile`). Bundles a local placeholder voice (`assets/default_voice.wav`) into `/app/assets/xtts_default.wav`.
-  - *Runtime*: inline Pydantic schemas, temporary audio helpers, XTTS generator with locking, and faster-whisper transcriber. `/speak` enforces text/script, supports optional voice cloning; `/transcribe` proxies faster-whisper. `NodeSelector` is pinned to Chutes-approved GPUs (`h100`, `h200`, `b200`).
+- **XTTS + Whisper** (`deploy_xtts_whisper.py`)
+  - Ports 8020 (XTTS FastAPI) + 8080 (Whisper.cpp)
+  - Cords: `GET /speakers/`, `POST /tts_to_audio/`, `POST /v1/audio/transcriptions`
 
-- **VibeVoice + Whisper**:
-  - *Image*: installs `ffmpeg`, `vibevoice==0.0.1`, torch stack, `soundfile`, `librosa`, `faster-whisper`, and copies the same placeholder voice to `/app/assets/vibevoice_default.wav`.
-  - *Runtime*: script auto-formatting (adds “Speaker i” tags when needed), voice loading/resampling, CFG + token overrides, and a whisper endpoint. All helpers live inside the file. GPU selector includes only `h100`, `h100_sxm`, `h200` per platform rules.
+- **VibeVoice + Whisper** (`deploy_vibevoice_whisper.py`)
+  - Ports 7860 (Gradio wrapper) + 8080 (Whisper.cpp)
+  - Cords: `POST /api/generate_audio`, `POST /queue/join`, `POST /queue/status`, `POST /v1/audio/transcriptions`
 
-- **Higgs Audio + Whisper**:
-  - *Image*: installs `ffmpeg` and pulls Boson’s `higgs-audio` repo at a fixed commit plus torch stack and whisper deps.
-  - *Runtime*: builds ChatML prompts (`boson_multimodal` helpers imported lazily), enforces text/script check, and returns expressive narration audio; whisper cord matches the others. Requests `h100_sxm`, `h100_nvl`, or `mi300x`.
+- **Higgs Audio + Whisper** (`deploy_higgs_whisper.py`)
+  - Same Gradio/queue cord set as VibeVoice (`/api/generate_audio`, `/queue/*`, `/v1/audio/transcriptions`)
 
-- **Zonos + Whisper**:
-  - *Image*: adds `ffmpeg`, `espeak-ng`, `libespeak-ng1`, installs `zonos==0.1.0.dev0`, torch stack, whisper deps, and copies the placeholder voice to `/app/assets/zonos_default.wav`.
-  - *Runtime*: handles torchaudio resampling, voice cloning, CFG + max token overrides, and whisper transcription. Helpers are all embedded so the module is self-contained. GPU selector limited to `h100`, `h100_sxm`, `h200`.
+- **Zonos + Whisper** (`deploy_zonos_whisper.py`)
+  - Ports 7860 (Blocks UI) + 8080 (Whisper.cpp)
+  - Cords: `POST /api/generate_audio`, `POST /api/predict/`, `POST /queue/join`, `POST /queue/status`,
+    `GET /file?path=...`, `POST /v1/audio/transcriptions`
 
-Each deploy script embeds its own request models, temporary audio helpers, and Whisper wrapper—no shared imports—so remote miners can run the lone `.py` file uploaded by `chutes build`.
+Since we do not mutate payloads, keep sending the **exact JSON / multipart bodies** that the vendor
+servers expect (e.g., Gradio queue payloads, Whisper form uploads, etc.).
+
+> **Input validation:** Each JSON cord now passes through a `pydantic.BaseModel`
+wrapper so we can stop obviously malformed payloads (non-object JSON, missing
+envelopes) before they reach the upstream containers, while still forwarding all
+fields verbatim to the vendor services. Multipart Whisper uploads continue to go
+straight through to avoid touching binary bodies.
 
 Environment variables (`env.example` → `.env`):
 ```
-CHUTES_USERNAME=...
-WHISPER_MODEL=large-v3-turbo          # fallback
-XTTS_MODEL_ID=...
-VIBEVOICE_MODEL_ID=...
-HIGGS_MODEL_ID=...
-HIGGS_AUDIO_TOKENIZER=...
-ZONOS_MODEL_ID=...
-# optional per-engine overrides e.g. XTTS_WHISPER_MODEL, VIBEVOICE_WHISPER_MODEL, etc.
+CHUTES_USERNAME=skyrimnet
+
+# optional overrides if the upstream images ever change their entrypoints/ports
+XTTS_ENTRYPOINT=/usr/local/bin/docker-entrypoint.sh
+XTTS_HTTP_PORT=8020
+XTTS_WHISPER_PORT=8080
+
+VIBEVOICE_ENTRYPOINT=/usr/local/bin/docker-entrypoint.sh
+VIBEVOICE_HTTP_PORT=7860
+VIBEVOICE_WHISPER_PORT=8080
+
+HIGGS_ENTRYPOINT=/usr/local/bin/docker-entrypoint.sh
+HIGGS_HTTP_PORT=7860
+HIGGS_WHISPER_PORT=8080
+
+ZONOS_ENTRYPOINT=/usr/local/bin/docker-entrypoint.sh
+ZONOS_HTTP_PORT=7860
+ZONOS_WHISPER_PORT=8080
 ```
 
 ---
@@ -78,58 +94,12 @@ ZONOS_MODEL_ID=...
 
 ---
 
-## Local dev testing
+## Payloads / testing
 
-```bash
-cat > speak_payload.json <<'EOF'
-{
-  "text": "Welcome to SkyrimNet private chutes!",
-  "language": "en",
-  "cfg_scale": 1.3
-}
-EOF
-
-# terminal 1 (Ctrl+C to stop)
-chutes run deploy_xtts_whisper:chute --dev --port 8000 --debug
-
-# terminal 2 (while the chute runs)
-curl -sS -X POST http://127.0.0.1:8000/speak \
-     -H "Content-Type: application/json" \
-     --data @speak_payload.json \
-     --output output.wav
-```
-
-Swap the payload and endpoint to exercise `/transcribe`. When satisfied, stop the dev server with `Ctrl+C`.
-
----
-
-## Request payload cheatsheet
-
-```jsonc
-// /speak
-{
-  "text": "fallback text if script omitted",
-  "script": "Speaker 0: ...\nSpeaker 1: ...",
-  "language": "en-us",
-  "voice_sample_b64": "<base64 wav/mp3>",
-  "temperature": 0.2,
-  "top_p": 0.9,
-  "cfg_scale": 1.3,
-  "max_new_tokens": 2048,
-  "num_speakers": 2
-}
-```
-
-```jsonc
-// /transcribe
-{
-  "audio_b64": "<base64 wav/mp3>",
-  "translate_to_english": false,
-  "language": null
-}
-```
-
-Engine-specific notes live near the Pydantic models in each deploy script (e.g., VibeVoice expects `Speaker i:` formatting, Higgs uses `temperature`/`top_p`, XTTS/Zonos lean on `voice_sample_b64`, etc.).
+Use the vendor’s own documentation (or live Gradio UI) for request bodies and workflows. Because we
+simply proxy HTTP, any payload that worked against the original container will work against the
+Chutes-hosted endpoint. For local smoke tests you can still run `chutes run <module>:chute --dev`,
+but note that the upstream servers expect a GPU and will fail-fast on CPU-only machines.
 
 ---
 
