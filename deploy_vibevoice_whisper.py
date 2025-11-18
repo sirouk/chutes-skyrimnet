@@ -1,7 +1,9 @@
 import asyncio
 import os
 import signal
+import shutil
 import subprocess
+from typing import Optional
 
 from chutes.chute import Chute, NodeSelector
 from chutes.image import Image
@@ -11,6 +13,7 @@ ENTRYPOINT = os.getenv("VIBEVOICE_ENTRYPOINT", "/usr/local/bin/docker-entrypoint
 SERVICE_PORT = int(os.getenv("VIBEVOICE_HTTP_PORT", "7860"))
 WHISPER_PORT = int(os.getenv("VIBEVOICE_WHISPER_PORT", "8080"))
 LOCAL_HOST = "127.0.0.1"
+VENDOR_IMAGE = os.getenv("VIBEVOICE_VENDOR_IMAGE", "elbios/vibevoice-whisper:latest")
 
 
 async def wait_for_port(port: int, host: str = LOCAL_HOST, timeout: int = 300) -> None:
@@ -63,7 +66,50 @@ No custom TTS logic remains in this repo — requests are simply forwarded to th
 
 @chute.on_startup()
 async def boot(self):
-    self._entrypoint_proc = subprocess.Popen(["bash", "-lc", ENTRYPOINT])
+    self._entrypoint_proc: Optional[subprocess.Popen[bytes]] = None
+    self._entrypoint_container: Optional[str] = None
+    if os.path.exists(ENTRYPOINT):
+        self._entrypoint_proc = subprocess.Popen(["bash", "-lc", ENTRYPOINT])
+    else:
+        container_name = f"vibevoice-dev-{os.getpid()}"
+        self._entrypoint_container = container_name
+        env_flags = []
+        for key in [
+            "VIBEVOICE_HTTP_PORT",
+            "VIBEVOICE_WHISPER_PORT",
+            "VV_PRELOAD",
+            "VV_MODEL",
+            "VV_EXLLAMA_MODEL",
+            "VV_ATTENTION",
+            "CUDA_VISIBLE_DEVICES",
+            "NVIDIA_VISIBLE_DEVICES",
+        ]:
+            value = os.getenv(key)
+            if value is not None:
+                env_flags.extend(["-e", f"{key}={value}"])
+        gpu_flags: list[str] = []
+        override = os.getenv("VIBEVOICE_DEV_GPUS")
+        if override:
+            gpu_flags = ["--gpus", override]
+        elif shutil.which("nvidia-smi"):
+            gpu_flags = ["--gpus", "all"]
+            if os.path.exists("/usr/bin/nvidia-container-runtime"):
+                gpu_flags.extend(["--runtime", "nvidia"])
+        cmd = [
+            "docker",
+            "run",
+            "--rm",
+            "--name",
+            container_name,
+            *gpu_flags,
+            "-p",
+            f"{SERVICE_PORT}:{SERVICE_PORT}",
+            "-p",
+            f"{WHISPER_PORT}:{WHISPER_PORT}",
+            *env_flags,
+            VENDOR_IMAGE,
+        ]
+        self._entrypoint_proc = subprocess.Popen(cmd)
     await wait_for_port(SERVICE_PORT)
     await wait_for_port(WHISPER_PORT)
 
@@ -77,6 +123,9 @@ async def shutdown(self):
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
+    container = getattr(self, "_entrypoint_container", None)
+    if container:
+        subprocess.run(["docker", "kill", container], check=False)
 
 
 @chute.cord(
