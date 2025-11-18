@@ -26,6 +26,8 @@ Chutes cords. Nothing is re-implemented inside this repo; we simply forward requ
     `/set_speaker_folder`, `/switch_model`, `/set_tts_settings`, `/tts_stream`,
     `/tts_to_audio/`, `/tts_to_file`, `/create_latents`, `/store_latents`,
     `/create_and_store_latents`, plus Whisper’s `POST /v1/audio/transcriptions`.
+  - Local `chutes run --dev` automatically spawns `elbios/xtts-whisper:latest` via Docker if the
+    entrypoint script isn’t present on the host, so you can exercise the real vendor stack even off-container.
 
 - **VibeVoice + Whisper** (`deploy_vibevoice_whisper.py`)
   - Ports 7860 (Gradio wrapper) + 8080 (Whisper.cpp)

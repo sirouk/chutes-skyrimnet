@@ -2,7 +2,7 @@ import asyncio
 import os
 import signal
 import subprocess
-from typing import Dict
+from typing import Dict, Optional
 from urllib.parse import urlencode
 
 import httpx
@@ -13,6 +13,7 @@ from chutes.image import Image
 
 USERNAME = os.getenv("CHUTES_USERNAME", "skyrimnet")
 ENTRYPOINT = os.getenv("XTTS_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh")
+VENDOR_IMAGE = os.getenv("XTTS_VENDOR_IMAGE", "elbios/xtts-whisper:latest")
 XTTS_PORT = int(os.getenv("XTTS_HTTP_PORT", "8020"))
 WHISPER_PORT = int(os.getenv("XTTS_WHISPER_PORT", "8080"))
 LOCAL_HOST = "127.0.0.1"
@@ -72,13 +73,42 @@ longer — everything runs inside the vendor image.
 
 @chute.on_startup()
 async def boot(self):
-    try:
+    self._entrypoint_container: Optional[str] = None
+    if os.path.exists(ENTRYPOINT):
         self._entrypoint_proc = subprocess.Popen(["bash", "-lc", ENTRYPOINT])
-    except FileNotFoundError as exc:
-        raise RuntimeError(
-            f"XTTS entrypoint '{ENTRYPOINT}' not found. "
-            "Ensure the script exists in the base image or override XTTS_ENTRYPOINT."
-        ) from exc
+    else:
+        container_name = f"xtts-dev-{os.getpid()}"
+        self._entrypoint_container = container_name
+        env_flags = []
+        for key in [
+            "WHISPER_MODEL",
+            "WHISPER_MODELS_DIR",
+            "MAX_IDLE_SECONDS",
+            "XTTS_HTTP_PORT",
+            "XTTS_WHISPER_PORT",
+        ]:
+            value = os.getenv(key)
+            if value is not None:
+                env_flags.extend(["-e", f"{key}={value}"])
+        cmd = [
+            "docker",
+            "run",
+            "--rm",
+            "--name",
+            container_name,
+            "-p",
+            f"{XTTS_PORT}:{XTTS_PORT}",
+            "-p",
+            f"{WHISPER_PORT}:{WHISPER_PORT}",
+            *env_flags,
+            VENDOR_IMAGE,
+        ]
+        try:
+            self._entrypoint_proc = subprocess.Popen(cmd)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                "Docker binary not found. Install Docker locally or ensure XTTS_ENTRYPOINT is available."
+            ) from exc
     await wait_for_port(XTTS_PORT)
     await wait_for_port(WHISPER_PORT)
 
@@ -92,6 +122,9 @@ async def shutdown(self):
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
+    container_name = getattr(self, "_entrypoint_container", None)
+    if container_name:
+        subprocess.run(["docker", "kill", container_name], check=False)
 
 
 @chute.cord(
