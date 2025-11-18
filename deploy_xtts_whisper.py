@@ -3,6 +3,7 @@ import os
 import signal
 import subprocess
 from typing import Dict
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import HTTPException, Request, Response
@@ -171,13 +172,16 @@ def _append_query(url: str, request: Request) -> str:
     return f"{url}{separator}{request.url.query}"
 
 
-async def _proxy_request(request: Request, target_url: str) -> Response:
+async def _proxy_request(
+    request: Request, target_url: str, include_query: bool = True
+) -> Response:
+    url = _append_query(target_url, request) if include_query else target_url
     headers = _strip_hop_headers(dict(request.headers))
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
             resp = await client.request(
                 method=request.method,
-                url=target_url,
+                url=url,
                 headers=headers,
                 content=await request.body(),
             )
@@ -198,13 +202,28 @@ async def _proxy_request(request: Request, target_url: str) -> Response:
 
 
 @chute.cord(
-    public_api_path="/sample/{file_path:path}",
+    public_api_path="/sample",
     public_api_method="GET",
     output_content_type="audio/wav",
 )
-async def sample(self, request: Request, file_path: str):
-    target = _append_query(f"{XTTS_BASE}/sample/{file_path}", request)
-    return await _proxy_request(request, target)
+async def sample(self, request: Request):
+    params = list(request.query_params.multi_items())
+    file_path = None
+    filtered: Dict[str, str] = {}
+    for key, value in params:
+        if key == "path" and file_path is None:
+            file_path = value
+        else:
+            filtered.setdefault(key, value)
+    if not file_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Query parameter `path` (relative file path) is required.",
+        )
+    target = f"{XTTS_BASE}/sample/{file_path}"
+    if filtered:
+        target = f"{target}?{urlencode(filtered, doseq=True)}"
+    return await _proxy_request(request, target, include_query=False)
 
 
 @chute.cord(

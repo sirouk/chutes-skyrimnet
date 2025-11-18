@@ -22,7 +22,7 @@ Chutes cords. Nothing is re-implemented inside this repo; we simply forward requ
   - Ports 8020 (XTTS FastAPI) + 8080 (Whisper.cpp)
   - Every FastAPI route provided by `xtts_api_server` is exposed via passthrough cords:
     `/speakers`, `/speakers_list`, `/languages`, `/get_folders`,
-    `/get_models_list`, `/get_tts_settings`, `/sample/{file_path}`, `/set_output`,
+    `/get_models_list`, `/get_tts_settings`, `/sample?path=...` (proxy for `/sample/{file_path}`), `/set_output`,
     `/set_speaker_folder`, `/switch_model`, `/set_tts_settings`, `/tts_stream`,
     `/tts_to_audio/`, `/tts_to_file`, `/create_latents`, `/store_latents`,
     `/create_and_store_latents`, plus Whisper’s `POST /v1/audio/transcriptions`.
