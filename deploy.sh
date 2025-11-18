@@ -32,7 +32,13 @@ cat $HOME/.chutes/config.ini | grep username
 
 # Build at least one chute locally before touching remote infra (no $50 balance needed)
 echo "Building XTTS chute locally for validation..."
-chutes build deploy_xtts_whisper:chute --local --debug
+CHUTES_USERNAME=${CHUTES_USERNAME:-skyrimnet} chutes build deploy_xtts_whisper:chute --local --wait
+
+echo "Inspect each wrapped vendor image directly (watch logs, Ctrl+C to exit):"
+echo "  docker run --rm xtts-whisper:wrap-1.0.0"
+echo "  docker run --rm vibevoice-whisper:wrap-1.0.0"
+echo "  docker run --rm higgs-whisper:wrap-1.0.0"
+echo "  docker run --rm zonos-whisper:wrap-1.0.0"
 
 # Remote build (uploads assets; requires >= $50 USD account balance)
 # chutes build deploy_xtts_whisper:chute --wait

@@ -58,6 +58,7 @@ XTTS_WHISPER_PORT=8080
 VIBEVOICE_ENTRYPOINT=/usr/local/bin/docker-entrypoint.sh
 VIBEVOICE_HTTP_PORT=7860
 VIBEVOICE_WHISPER_PORT=8080
+VIBEVOICE_WHISPER_MODEL=medium.en
 
 HIGGS_ENTRYPOINT=/usr/local/bin/docker-entrypoint.sh
 HIGGS_HTTP_PORT=7860
@@ -74,18 +75,30 @@ ZONOS_WHISPER_PORT=8080
 
 1. **Bootstrap CLI** (`setup.sh`): create `.venv`, install `chutes`/`bittensor`, run `chutes register`. Copy `config.ini.example` → `~/.chutes/config.ini` (or keep a local `.config.ini`) and fill in your real username, IDs, and addresses.
 2. **Study/update a chute**: edit env vars at top of `deploy_*.py` if needed (username, model IDs, etc.).
-3. **Local validation (optional)**:
+3. **Local build (mandatory right after edits)**:
    ```bash
-   chutes build deploy_xtts_whisper:chute --local --debug
+   CHUTES_USERNAME=<you> chutes build deploy_xtts_whisper:chute --local --wait
+   ```
+   Repeat for the other modules as needed (swap `xtts` with `vibevoice`, `higgs`, `zonos`). `--local --wait` ensures Docker completes before moving on.
+4. **Inspect the wrapped vendor images directly** (repeat for every chute):
+   ```bash
+   docker run --rm xtts-whisper:wrap-1.0.0
+   docker run --rm vibevoice-whisper:wrap-1.0.0
+   docker run --rm higgs-whisper:wrap-1.0.0
+   docker run --rm zonos-whisper:wrap-1.0.0
+   ```
+   Watch the logs to confirm each upstream entrypoint downloads models and binds its ports.
+5. **Optional dev server**:
+   ```bash
    chutes run deploy_xtts_whisper:chute --dev --port 8000 --debug
    ```
-   Local builds exec `/usr/bin/docker`. On macOS, symlink `/usr/local/bin/docker` → `/usr/bin/docker` if missing.
-4. **Remote build** (required before deploy):
+   Local runs execute via `/usr/bin/docker`. On macOS, symlink `/usr/local/bin/docker` → `/usr/bin/docker` if missing.
+6. **Remote build** (required before deploy):
    ```bash
    chutes build deploy_xtts_whisper:chute --wait
    ```
    API enforces ≥$50 USD balance (in addition to TAO fees) before accepting an image upload.
-5. **Deploy**:
+7. **Deploy**:
    ```bash
    chutes deploy deploy_xtts_whisper:chute --accept-fee [--public]
    chutes chutes list

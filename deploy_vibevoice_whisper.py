@@ -10,6 +10,7 @@ USERNAME = os.getenv("CHUTES_USERNAME", "skyrimnet")
 ENTRYPOINT = os.getenv("VIBEVOICE_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh")
 SERVICE_PORT = int(os.getenv("VIBEVOICE_HTTP_PORT", "7860"))
 WHISPER_PORT = int(os.getenv("VIBEVOICE_WHISPER_PORT", "8080"))
+WHISPER_MODEL = os.getenv("VIBEVOICE_WHISPER_MODEL", "medium.en")
 LOCAL_HOST = "127.0.0.1"
 
 
@@ -35,6 +36,7 @@ image = (
         readme="Wrapper image for elbios/vibevoice-whisper with the Chutes runtime pre-installed.",
     )
     .from_base("elbios/vibevoice-whisper:latest")
+    .with_env("WHISPER_MODEL", WHISPER_MODEL)
     .run_command("pip install --no-cache-dir chutes httpx python-multipart fastapi")
 )
 
