@@ -1,9 +1,9 @@
 # first you'll want to set up the chutes CLI by using a new account, then copy config.ini.example into place and fill in your actual credentials
 
 
-# uv seed to create an envrionment with python 3.12
+# uv seed to create an environment with python 3.11
 brew install uv
-uv venv --python 3.12 .venv
+uv venv --python 3.11 .venv
 source .venv/bin/activate
 
 # install the chutes cli
