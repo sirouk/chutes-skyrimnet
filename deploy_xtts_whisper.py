@@ -1,8 +1,6 @@
 import asyncio
-import logging
 import os
 import signal
-import shutil
 import subprocess
 from typing import Dict
 from urllib.parse import urlencode
@@ -13,8 +11,6 @@ from fastapi import HTTPException, Request, Response
 from chutes.chute import Chute, NodeSelector
 from chutes.image import Image
 
-logger = logging.getLogger(__name__)
-
 USERNAME = os.getenv("CHUTES_USERNAME", "skyrimnet")
 ENTRYPOINT = os.getenv("XTTS_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh")
 XTTS_PORT = int(os.getenv("XTTS_HTTP_PORT", "8020"))
@@ -22,26 +18,6 @@ WHISPER_PORT = int(os.getenv("XTTS_WHISPER_PORT", "8080"))
 LOCAL_HOST = "127.0.0.1"
 XTTS_BASE = f"http://{LOCAL_HOST}:{XTTS_PORT}"
 WHISPER_BASE = f"http://{LOCAL_HOST}:{WHISPER_PORT}"
-
-
-def _resolve_entrypoint(label: str) -> str | None:
-    candidates = [
-        ENTRYPOINT,
-        "/usr/local/bin/docker-entrypoint.sh",
-        "/docker-entrypoint.sh",
-        "docker-entrypoint.sh",
-    ]
-    for candidate in candidates:
-        if not candidate:
-            continue
-        expanded = os.path.expanduser(candidate)
-        if os.path.isabs(expanded) and os.path.exists(expanded):
-            return expanded
-        found = shutil.which(expanded)
-        if found:
-            return found
-    logger.warning("%s entrypoint %s not found on this host.", label, ENTRYPOINT)
-    return None
 
 
 async def wait_for_port(port: int, host: str = LOCAL_HOST, timeout: int = 240) -> None:
@@ -96,13 +72,15 @@ longer — everything runs inside the vendor image.
 
 @chute.on_startup()
 async def boot(self):
-    entrypoint = _resolve_entrypoint("xtts")
-    if entrypoint:
-        self._entrypoint_proc = subprocess.Popen(["bash", "-lc", entrypoint])
-        await wait_for_port(XTTS_PORT)
-        await wait_for_port(WHISPER_PORT)
-    else:
-        logger.warning("Skipping XTTS entrypoint launch; ports will not be available in dev mode.")
+    try:
+        self._entrypoint_proc = subprocess.Popen(["bash", "-lc", ENTRYPOINT])
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"XTTS entrypoint '{ENTRYPOINT}' not found. "
+            "Ensure the script exists in the base image or override XTTS_ENTRYPOINT."
+        ) from exc
+    await wait_for_port(XTTS_PORT)
+    await wait_for_port(WHISPER_PORT)
 
 
 @chute.on_shutdown()
