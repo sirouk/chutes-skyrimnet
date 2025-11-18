@@ -271,10 +271,13 @@ async def set_tts_settings(self, payload: TTSSettingsPayload):
 @chute.cord(
     public_api_path="/tts_to_audio/",
     public_api_method="POST",
+    passthrough=True,
+    passthrough_port=XTTS_PORT,
+    passthrough_path="/tts_to_audio/",
     output_content_type="audio/wav",
 )
-async def tts_to_audio(self, request: Request) -> Response:
-    return await proxy_request(request, f"{XTTS_BASE}/tts_to_audio/")
+async def tts_to_audio(self):
+    ...
 
 
 @chute.cord(public_api_path="/tts_to_file", public_api_method="POST")
@@ -285,19 +288,25 @@ async def tts_to_file(self, payload: SynthesisFilePayload):
 @chute.cord(
     public_api_path="/tts_stream",
     public_api_method="GET",
+    passthrough=True,
+    passthrough_port=XTTS_PORT,
+    passthrough_path="/tts_stream",
     output_content_type="audio/x-wav",
 )
-async def tts_stream(self, request: Request) -> Response:
-    return await proxy_request(request, f"{XTTS_BASE}/tts_stream")
+async def tts_stream(self):
+    ...
 
 
 @chute.cord(
     public_api_path="/create_latents",
     public_api_method="POST",
+    passthrough=True,
+    passthrough_port=XTTS_PORT,
+    passthrough_path="/create_latents",
     output_content_type="application/json",
 )
-async def create_latents(self, request: Request) -> Response:
-    return await proxy_request(request, f"{XTTS_BASE}/create_latents")
+async def create_latents(self):
+    ...
 
 
 @chute.cord(public_api_path="/store_latents", public_api_method="POST")
@@ -308,12 +317,21 @@ async def store_latents(self, payload: StoreLatentsPayload):
 @chute.cord(
     public_api_path="/create_and_store_latents",
     public_api_method="POST",
+    passthrough=True,
+    passthrough_port=XTTS_PORT,
+    passthrough_path="/create_and_store_latents",
     output_content_type="application/json",
 )
-async def create_and_store_latents(self, request: Request) -> Response:
-    return await proxy_request(request, f"{XTTS_BASE}/create_and_store_latents")
+async def create_and_store_latents(self):
+    ...
 
 
-@chute.cord(public_api_path="/v1/audio/transcriptions", public_api_method="POST")
-async def transcribe(self, request: Request) -> Response:
-    return await proxy_request(request, f"{WHISPER_BASE}/inference")
+@chute.cord(
+    public_api_path="/v1/audio/transcriptions",
+    public_api_method="POST",
+    passthrough=True,
+    passthrough_port=WHISPER_PORT,
+    passthrough_path="/inference",
+)
+async def transcribe(self):
+    ...

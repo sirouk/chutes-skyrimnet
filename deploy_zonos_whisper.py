@@ -215,6 +215,12 @@ async def fetch_file(self, request: Request) -> Response:
     return await proxy_get(target)
 
 
-@chute.cord(public_api_path="/v1/audio/transcriptions", public_api_method="POST")
-async def transcribe(self, request: Request) -> Response:
-    return await proxy_request(request, f"{WHISPER_BASE}/inference")
+@chute.cord(
+    public_api_path="/v1/audio/transcriptions",
+    public_api_method="POST",
+    passthrough=True,
+    passthrough_port=WHISPER_PORT,
+    passthrough_path="/inference",
+)
+async def transcribe(self):
+    ...

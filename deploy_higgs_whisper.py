@@ -176,6 +176,12 @@ async def queue_status(self, payload: JSONPayload) -> Response:
     return await proxy_json(payload, f"{SERVICE_BASE}/queue/status")
 
 
-@chute.cord(public_api_path="/v1/audio/transcriptions", public_api_method="POST")
-async def transcribe(self, request: Request) -> Response:
-    return await proxy_request(request, f"{WHISPER_BASE}/inference")
+@chute.cord(
+    public_api_path="/v1/audio/transcriptions",
+    public_api_method="POST",
+    passthrough=True,
+    passthrough_port=WHISPER_PORT,
+    passthrough_path="/inference",
+)
+async def transcribe(self):
+    ...
