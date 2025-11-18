@@ -1,0 +1,29 @@
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local configuration
+.env
+config.ini
+
+# Build / cache
+.uv/
+.mypy_cache/
+.pytest_cache/
+dist/
+build/
+
+# Editor files
+.DS_Store
+*.swp
+.idea/
+.vscode/
+

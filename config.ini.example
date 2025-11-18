@@ -1,0 +1,12 @@
+[api]
+base_url = https://api.chutes.ai
+
+[auth]
+username = your_username
+user_id = 00000000-0000-0000-0000-000000000000
+hotkey_seed = 0000000000000000000000000000000000000000000000000000000000000000
+hotkey_name = your-hotkey-name
+hotkey_ss58address = 5XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+[payment]
+address = 5YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY
