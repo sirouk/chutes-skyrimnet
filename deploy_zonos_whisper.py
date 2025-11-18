@@ -1,16 +1,16 @@
 import asyncio
 import os
+import signal
+import subprocess
 
 from chutes.chute import Chute, NodeSelector
 from chutes.image import Image
-from vendor_launcher import VendorProcessHandle, launch_vendor_process
 
 USERNAME = os.getenv("CHUTES_USERNAME", "skyrimnet")
 ENTRYPOINT = os.getenv("ZONOS_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh")
 SERVICE_PORT = int(os.getenv("ZONOS_HTTP_PORT", "7860"))
 WHISPER_PORT = int(os.getenv("ZONOS_WHISPER_PORT", "8080"))
 LOCAL_HOST = "127.0.0.1"
-VENDOR_IMAGE = os.getenv("ZONOS_VENDOR_IMAGE", "elbios/zonos-whisper:latest")
 
 
 async def wait_for_port(port: int, host: str = LOCAL_HOST, timeout: int = 300) -> None:
@@ -72,25 +72,26 @@ ZONOS_ENV_PREFIXES = ["ZONOS_", "WHISPER_"]
 
 @chute.on_startup()
 async def boot(self):
-    self._vendor_handle: VendorProcessHandle = launch_vendor_process(
-        label="zonos",
-        entrypoint=ENTRYPOINT,
-        vendor_image=VENDOR_IMAGE,
-        service_ports=[SERVICE_PORT],
-        whisper_ports=[WHISPER_PORT],
-        env_keys=ZONOS_ENV_KEYS,
-        env_prefixes=ZONOS_ENV_PREFIXES,
-        dev_gpu_env="ZONOS_DEV_GPUS",
-    )
+    try:
+        self._entrypoint_proc = subprocess.Popen(["bash", "-lc", ENTRYPOINT])
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"Zonos entrypoint '{ENTRYPOINT}' not found. "
+            "Ensure the script exists in the base image or override ZONOS_ENTRYPOINT."
+        ) from exc
     await wait_for_port(SERVICE_PORT)
     await wait_for_port(WHISPER_PORT)
 
 
 @chute.on_shutdown()
 async def shutdown(self):
-    handle = getattr(self, "_vendor_handle", None)
-    if handle:
-        handle.stop()
+    proc = getattr(self, "_entrypoint_proc", None)
+    if proc and proc.poll() is None:
+        proc.send_signal(signal.SIGTERM)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
 
 @chute.cord(

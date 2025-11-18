@@ -1,16 +1,16 @@
 import asyncio
 import os
+import signal
+import subprocess
 
 from chutes.chute import Chute, NodeSelector
 from chutes.image import Image
-from vendor_launcher import VendorProcessHandle, launch_vendor_process
 
 USERNAME = os.getenv("CHUTES_USERNAME", "skyrimnet")
 ENTRYPOINT = os.getenv("VIBEVOICE_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh")
 SERVICE_PORT = int(os.getenv("VIBEVOICE_HTTP_PORT", "7860"))
 WHISPER_PORT = int(os.getenv("VIBEVOICE_WHISPER_PORT", "8080"))
 LOCAL_HOST = "127.0.0.1"
-VENDOR_IMAGE = os.getenv("VIBEVOICE_VENDOR_IMAGE", "elbios/vibevoice-whisper:latest")
 
 
 async def wait_for_port(port: int, host: str = LOCAL_HOST, timeout: int = 300) -> None:
@@ -25,6 +25,7 @@ async def wait_for_port(port: int, host: str = LOCAL_HOST, timeout: int = 300) -
             if asyncio.get_running_loop().time() >= deadline:
                 raise RuntimeError(f"Timed out waiting for {host}:{port}")
             await asyncio.sleep(2)
+
 
 image = (
     Image(
@@ -61,34 +62,28 @@ No custom TTS logic remains in this repo — requests are simply forwarded to th
 )
 
 
-VIBEVOICE_ENV_KEYS = [
-    "CUDA_VISIBLE_DEVICES",
-    "NVIDIA_VISIBLE_DEVICES",
-]
-VIBEVOICE_ENV_PREFIXES = ["VIBEVOICE_", "VV_"]
-
-
 @chute.on_startup()
 async def boot(self):
-    self._vendor_handle: VendorProcessHandle = launch_vendor_process(
-        label="vibevoice",
-        entrypoint=ENTRYPOINT,
-        vendor_image=VENDOR_IMAGE,
-        service_ports=[SERVICE_PORT],
-        whisper_ports=[WHISPER_PORT],
-        env_keys=VIBEVOICE_ENV_KEYS,
-        env_prefixes=VIBEVOICE_ENV_PREFIXES,
-        dev_gpu_env="VIBEVOICE_DEV_GPUS",
-    )
+    try:
+        self._entrypoint_proc = subprocess.Popen(["bash", "-lc", ENTRYPOINT])
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"VibeVoice entrypoint '{ENTRYPOINT}' not found. "
+            "Ensure the script exists in the base image or override VIBEVOICE_ENTRYPOINT."
+        ) from exc
     await wait_for_port(SERVICE_PORT)
     await wait_for_port(WHISPER_PORT)
 
 
 @chute.on_shutdown()
 async def shutdown(self):
-    handle = getattr(self, "_vendor_handle", None)
-    if handle:
-        handle.stop()
+    proc = getattr(self, "_entrypoint_proc", None)
+    if proc and proc.poll() is None:
+        proc.send_signal(signal.SIGTERM)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
 
 @chute.cord(
@@ -98,8 +93,7 @@ async def shutdown(self):
     passthrough_port=SERVICE_PORT,
     passthrough_path="/api/generate_audio",
 )
-async def generate_audio(self):
-    ...
+async def generate_audio(self): ...
 
 
 @chute.cord(
@@ -109,8 +103,7 @@ async def generate_audio(self):
     passthrough_port=SERVICE_PORT,
     passthrough_path="/queue/join",
 )
-async def queue_join(self):
-    ...
+async def queue_join(self): ...
 
 
 @chute.cord(
@@ -120,8 +113,7 @@ async def queue_join(self):
     passthrough_port=SERVICE_PORT,
     passthrough_path="/queue/status",
 )
-async def queue_status(self):
-    ...
+async def queue_status(self): ...
 
 
 @chute.cord(
@@ -131,5 +123,4 @@ async def queue_status(self):
     passthrough_port=WHISPER_PORT,
     passthrough_path="/inference",
 )
-async def transcribe(self):
-    ...
+async def transcribe(self): ...
