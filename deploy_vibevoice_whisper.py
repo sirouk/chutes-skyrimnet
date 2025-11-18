@@ -2,11 +2,6 @@ import asyncio
 import os
 import signal
 import subprocess
-from typing import Any, Dict
-
-import httpx
-from fastapi import HTTPException, Request, Response
-from pydantic import BaseModel
 
 from chutes.chute import Chute, NodeSelector
 from chutes.image import Image
@@ -16,8 +11,6 @@ ENTRYPOINT = os.getenv("VIBEVOICE_ENTRYPOINT", "/usr/local/bin/docker-entrypoint
 SERVICE_PORT = int(os.getenv("VIBEVOICE_HTTP_PORT", "7860"))
 WHISPER_PORT = int(os.getenv("VIBEVOICE_WHISPER_PORT", "8080"))
 LOCAL_HOST = "127.0.0.1"
-SERVICE_BASE = f"http://{LOCAL_HOST}:{SERVICE_PORT}"
-WHISPER_BASE = f"http://{LOCAL_HOST}:{WHISPER_PORT}"
 
 
 async def wait_for_port(port: int, host: str = LOCAL_HOST, timeout: int = 300) -> None:
@@ -32,53 +25,6 @@ async def wait_for_port(port: int, host: str = LOCAL_HOST, timeout: int = 300) -
             if asyncio.get_running_loop().time() >= deadline:
                 raise RuntimeError(f"Timed out waiting for {host}:{port}")
             await asyncio.sleep(2)
-
-
-def _strip_hop_headers(headers):
-    hop_headers = {
-        "host",
-        "content-length",
-        "connection",
-        "keep-alive",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "te",
-        "trailers",
-        "transfer-encoding",
-        "upgrade",
-        "accept-encoding",
-    }
-    return {k: v for k, v in headers.items() if k.lower() not in hop_headers}
-
-
-async def proxy_request(request: Request, target_url: str) -> Response:
-    body = await request.body()
-    headers = _strip_hop_headers(dict(request.headers))
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
-            resp = await client.request(
-                method=request.method,
-                url=target_url,
-                content=body if body else None,
-                headers=headers,
-            )
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502, detail=f"Upstream VibeVoice error: {exc}"
-        ) from exc
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
-    return Response(
-        content=resp.content,
-        status_code=resp.status_code,
-        media_type=resp.headers.get("content-type"),
-        headers={
-            key: value
-            for key, value in resp.headers.items()
-            if key.lower() in {"content-type", "content-length"}
-        },
-    )
-
 
 image = (
     Image(
@@ -115,38 +61,6 @@ No custom TTS logic remains in this repo — requests are simply forwarded to th
 )
 
 
-class JSONPayload(BaseModel):
-    """Minimal validation to ensure queue/Gradio bodies stay JSON objects."""
-
-    __root__: Dict[str, Any]
-
-    def to_dict(self) -> Dict[str, Any]:
-        return self.__root__
-
-
-async def proxy_json(payload: JSONPayload, target_url: str) -> Response:
-    data = payload.to_dict()
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
-            resp = await client.post(target_url, json=data)
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502, detail=f"Upstream VibeVoice error: {exc}"
-        ) from exc
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
-    return Response(
-        content=resp.content,
-        status_code=resp.status_code,
-        media_type=resp.headers.get("content-type"),
-        headers={
-            key: value
-            for key, value in resp.headers.items()
-            if key.lower() in {"content-type", "content-length"}
-        },
-    )
-
-
 @chute.on_startup()
 async def boot(self):
     self._entrypoint_proc = subprocess.Popen(["bash", "-lc", ENTRYPOINT])
@@ -165,19 +79,37 @@ async def shutdown(self):
             proc.kill()
 
 
-@chute.cord(public_api_path="/api/generate_audio", public_api_method="POST")
-async def generate_audio(self, payload: JSONPayload) -> Response:
-    return await proxy_json(payload, f"{SERVICE_BASE}/api/generate_audio")
+@chute.cord(
+    public_api_path="/api/generate_audio",
+    public_api_method="POST",
+    passthrough=True,
+    passthrough_port=SERVICE_PORT,
+    passthrough_path="/api/generate_audio",
+)
+async def generate_audio(self):
+    ...
 
 
-@chute.cord(public_api_path="/queue/join", public_api_method="POST")
-async def queue_join(self, payload: JSONPayload) -> Response:
-    return await proxy_json(payload, f"{SERVICE_BASE}/queue/join")
+@chute.cord(
+    public_api_path="/queue/join",
+    public_api_method="POST",
+    passthrough=True,
+    passthrough_port=SERVICE_PORT,
+    passthrough_path="/queue/join",
+)
+async def queue_join(self):
+    ...
 
 
-@chute.cord(public_api_path="/queue/status", public_api_method="POST")
-async def queue_status(self, payload: JSONPayload) -> Response:
-    return await proxy_json(payload, f"{SERVICE_BASE}/queue/status")
+@chute.cord(
+    public_api_path="/queue/status",
+    public_api_method="POST",
+    passthrough=True,
+    passthrough_port=SERVICE_PORT,
+    passthrough_path="/queue/status",
+)
+async def queue_status(self):
+    ...
 
 
 @chute.cord(

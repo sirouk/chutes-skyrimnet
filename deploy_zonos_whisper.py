@@ -2,11 +2,6 @@ import asyncio
 import os
 import signal
 import subprocess
-from typing import Any, Dict
-
-import httpx
-from fastapi import HTTPException, Request, Response
-from pydantic import BaseModel
 
 from chutes.chute import Chute, NodeSelector
 from chutes.image import Image
@@ -16,8 +11,6 @@ ENTRYPOINT = os.getenv("ZONOS_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh"
 SERVICE_PORT = int(os.getenv("ZONOS_HTTP_PORT", "7860"))
 WHISPER_PORT = int(os.getenv("ZONOS_WHISPER_PORT", "8080"))
 LOCAL_HOST = "127.0.0.1"
-SERVICE_BASE = f"http://{LOCAL_HOST}:{SERVICE_PORT}"
-WHISPER_BASE = f"http://{LOCAL_HOST}:{WHISPER_PORT}"
 
 
 async def wait_for_port(port: int, host: str = LOCAL_HOST, timeout: int = 300) -> None:
@@ -32,75 +25,6 @@ async def wait_for_port(port: int, host: str = LOCAL_HOST, timeout: int = 300) -
             if asyncio.get_running_loop().time() >= deadline:
                 raise RuntimeError(f"Timed out waiting for {host}:{port}")
             await asyncio.sleep(2)
-
-
-def _strip_hop_headers(headers):
-    hop_headers = {
-        "host",
-        "content-length",
-        "connection",
-        "keep-alive",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "te",
-        "trailers",
-        "transfer-encoding",
-        "upgrade",
-        "accept-encoding",
-    }
-    return {k: v for k, v in headers.items() if k.lower() not in hop_headers}
-
-
-async def proxy_request(request: Request, target_url: str) -> Response:
-    body = await request.body()
-    headers = _strip_hop_headers(dict(request.headers))
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
-            resp = await client.request(
-                method=request.method,
-                url=target_url,
-                content=body if body else None,
-                headers=headers,
-            )
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502, detail=f"Upstream Zonos error: {exc}"
-        ) from exc
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
-    return Response(
-        content=resp.content,
-        status_code=resp.status_code,
-        media_type=resp.headers.get("content-type"),
-        headers={
-            key: value
-            for key, value in resp.headers.items()
-            if key.lower() in {"content-type", "content-length"}
-        },
-    )
-
-
-async def proxy_get(url: str) -> Response:
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
-            resp = await client.get(url)
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502, detail=f"Zonos asset fetch failed: {exc}"
-        ) from exc
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
-    return Response(
-        content=resp.content,
-        status_code=resp.status_code,
-        media_type=resp.headers.get("content-type"),
-        headers={
-            key: value
-            for key, value in resp.headers.items()
-            if key.lower() in {"content-type", "content-length"}
-        },
-    )
-
 
 image = (
     Image(
@@ -139,35 +63,6 @@ Whisper servers so clients can keep using the Zonos UI/API without uploading new
 )
 
 
-class JSONPayload(BaseModel):
-    __root__: Dict[str, Any]
-
-    def to_dict(self) -> Dict[str, Any]:
-        return self.__root__
-
-
-async def proxy_json(payload: JSONPayload, target_url: str) -> Response:
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
-            resp = await client.post(target_url, json=payload.to_dict())
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502, detail=f"Upstream Zonos error: {exc}"
-        ) from exc
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
-    return Response(
-        content=resp.content,
-        status_code=resp.status_code,
-        media_type=resp.headers.get("content-type"),
-        headers={
-            key: value
-            for key, value in resp.headers.items()
-            if key.lower() in {"content-type", "content-length"}
-        },
-    )
-
-
 @chute.on_startup()
 async def boot(self):
     self._entrypoint_proc = subprocess.Popen(["bash", "-lc", ENTRYPOINT])
@@ -186,33 +81,59 @@ async def shutdown(self):
             proc.kill()
 
 
-@chute.cord(public_api_path="/api/generate_audio", public_api_method="POST")
-async def generate_audio(self, payload: JSONPayload) -> Response:
-    return await proxy_json(payload, f"{SERVICE_BASE}/api/generate_audio")
+@chute.cord(
+    public_api_path="/api/generate_audio",
+    public_api_method="POST",
+    passthrough=True,
+    passthrough_port=SERVICE_PORT,
+    passthrough_path="/api/generate_audio",
+)
+async def generate_audio(self):
+    ...
 
 
-@chute.cord(public_api_path="/api/predict/", public_api_method="POST")
-async def api_predict(self, payload: JSONPayload) -> Response:
-    return await proxy_json(payload, f"{SERVICE_BASE}/api/predict/")
+@chute.cord(
+    public_api_path="/api/predict/",
+    public_api_method="POST",
+    passthrough=True,
+    passthrough_port=SERVICE_PORT,
+    passthrough_path="/api/predict/",
+)
+async def api_predict(self):
+    ...
 
 
-@chute.cord(public_api_path="/queue/join", public_api_method="POST")
-async def queue_join(self, payload: JSONPayload) -> Response:
-    return await proxy_json(payload, f"{SERVICE_BASE}/queue/join")
+@chute.cord(
+    public_api_path="/queue/join",
+    public_api_method="POST",
+    passthrough=True,
+    passthrough_port=SERVICE_PORT,
+    passthrough_path="/queue/join",
+)
+async def queue_join(self):
+    ...
 
 
-@chute.cord(public_api_path="/queue/status", public_api_method="POST")
-async def queue_status(self, payload: JSONPayload) -> Response:
-    return await proxy_json(payload, f"{SERVICE_BASE}/queue/status")
+@chute.cord(
+    public_api_path="/queue/status",
+    public_api_method="POST",
+    passthrough=True,
+    passthrough_port=SERVICE_PORT,
+    passthrough_path="/queue/status",
+)
+async def queue_status(self):
+    ...
 
 
-@chute.cord(public_api_path="/file", public_api_method="GET")
-async def fetch_file(self, request: Request) -> Response:
-    query = request.url.query
-    target = f"{SERVICE_BASE}/file"
-    if query:
-        target = f"{target}?{query}"
-    return await proxy_get(target)
+@chute.cord(
+    public_api_path="/file",
+    public_api_method="GET",
+    passthrough=True,
+    passthrough_port=SERVICE_PORT,
+    passthrough_path="/file",
+)
+async def fetch_file(self):
+    ...
 
 
 @chute.cord(
