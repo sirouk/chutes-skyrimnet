@@ -41,11 +41,15 @@ Chutes cords. Nothing is re-implemented inside this repo; we simply forward requ
 Since we do not mutate payloads, keep sending the **exact JSON / multipart bodies** that the vendor
 servers expect (e.g., Gradio queue payloads, Whisper form uploads, etc.).
 
-> **Input validation:** Each JSON cord now passes through a `pydantic.BaseModel`
-wrapper so we can stop obviously malformed payloads (non-object JSON, missing
-envelopes) before they reach the upstream containers, while still forwarding all
-fields verbatim to the vendor services. Multipart Whisper uploads continue to go
-straight through to avoid touching binary bodies.
+> **Input validation & proxying:** Each JSON cord now passes through a
+`pydantic.BaseModel` so we reject malformed payloads (non-object JSON, missing
+required keys) before hitting the vendor server, while still forwarding fields
+verbatim. Multipart Whisper uploads continue to go straight through to avoid
+touching binary bodies. We proxy every request rather than re-implementing the
+vendor FastAPI/Gradio apps; the entrypoint inside each Docker image already
+launches those services, and our cords simply forward traffic (with minimal
+header cleanup, timeouts, and validation) to the processes listening on
+localhost:7860/8020/8080.
 
 Environment variables (`env.example` → `.env`):
 ```
