@@ -1,7 +1,5 @@
 import asyncio
 import os
-import signal
-import subprocess
 from typing import Dict
 from urllib.parse import urlencode
 
@@ -10,9 +8,11 @@ from fastapi import HTTPException, Request, Response
 
 from chutes.chute import Chute, NodeSelector
 from chutes.image import Image
+from vendor_launcher import VendorProcessHandle, launch_vendor_process
 
 USERNAME = os.getenv("CHUTES_USERNAME", "skyrimnet")
 ENTRYPOINT = os.getenv("XTTS_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh")
+VENDOR_IMAGE = os.getenv("XTTS_VENDOR_IMAGE", "elbios/xtts-whisper:latest")
 XTTS_PORT = int(os.getenv("XTTS_HTTP_PORT", "8020"))
 WHISPER_PORT = int(os.getenv("XTTS_WHISPER_PORT", "8080"))
 LOCAL_HOST = "127.0.0.1"
@@ -70,28 +70,35 @@ longer — everything runs inside the vendor image.
 )
 
 
+XTTS_ENV_KEYS = [
+    "MAX_IDLE_SECONDS",
+    "CUDA_VISIBLE_DEVICES",
+    "NVIDIA_VISIBLE_DEVICES",
+]
+XTTS_ENV_PREFIXES = ["XTTS_", "WHISPER_", "HF_"]
+
+
 @chute.on_startup()
 async def boot(self):
-    try:
-        self._entrypoint_proc = subprocess.Popen(["bash", "-lc", ENTRYPOINT])
-    except FileNotFoundError as exc:
-        raise RuntimeError(
-            f"XTTS entrypoint '{ENTRYPOINT}' not found. "
-            "Ensure the script exists in the base image or override XTTS_ENTRYPOINT."
-        ) from exc
+    self._vendor_handle: VendorProcessHandle = launch_vendor_process(
+        label="xtts",
+        entrypoint=ENTRYPOINT,
+        vendor_image=VENDOR_IMAGE,
+        service_ports=[XTTS_PORT],
+        whisper_ports=[WHISPER_PORT],
+        env_keys=XTTS_ENV_KEYS,
+        env_prefixes=XTTS_ENV_PREFIXES,
+        dev_gpu_env="XTTS_DEV_GPUS",
+    )
     await wait_for_port(XTTS_PORT)
     await wait_for_port(WHISPER_PORT)
 
 
 @chute.on_shutdown()
 async def shutdown(self):
-    proc = getattr(self, "_entrypoint_proc", None)
-    if proc and proc.poll() is None:
-        proc.send_signal(signal.SIGTERM)
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+    handle = getattr(self, "_vendor_handle", None)
+    if handle:
+        handle.stop()
 
 
 @chute.cord(

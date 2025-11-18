@@ -46,6 +46,11 @@ running inside the Docker image. The lone exception is the XTTS sample-download 
 the payload verbatim. Either way, keep sending the **exact JSON / multipart bodies** those services
 document (Gradio queue payloads, Whisper form uploads, etc.).
 
+> **Local dev fallback:** When the vendor entrypoint isn’t present on your workstation (typical when
+> running `CHUTES_EXECUTION_CONTEXT=REMOTE`), the deploy scripts automatically `docker run` the published
+> `elbios/*-whisper` images, forward the HTTP ports, and request GPU access (`--gpus …`, `--runtime nvidia`
+> when available). Override `<SERVICE>_DEV_GPUS` or `<SERVICE>_VENDOR_IMAGE` if you need custom values.
+
 Environment variables (`env.example` → `.env`):
 ```
 CHUTES_USERNAME=skyrimnet
@@ -54,18 +59,26 @@ CHUTES_USERNAME=skyrimnet
 XTTS_ENTRYPOINT=/usr/local/bin/docker-entrypoint.sh
 XTTS_HTTP_PORT=8020
 XTTS_WHISPER_PORT=8080
+XTTS_VENDOR_IMAGE=elbios/xtts-whisper:latest
+XTTS_DEV_GPUS=all
 
 VIBEVOICE_ENTRYPOINT=/usr/local/bin/docker-entrypoint.sh
 VIBEVOICE_HTTP_PORT=7860
 VIBEVOICE_WHISPER_PORT=8080
+VIBEVOICE_VENDOR_IMAGE=elbios/vibevoice-whisper:latest
+VIBEVOICE_DEV_GPUS=all
 
 HIGGS_ENTRYPOINT=/usr/local/bin/docker-entrypoint.sh
 HIGGS_HTTP_PORT=7860
 HIGGS_WHISPER_PORT=8080
+HIGGS_VENDOR_IMAGE=elbios/higgs-whisper:latest
+HIGGS_DEV_GPUS=all
 
 ZONOS_ENTRYPOINT=/usr/local/bin/docker-entrypoint.sh
 ZONOS_HTTP_PORT=7860
 ZONOS_WHISPER_PORT=8080
+ZONOS_VENDOR_IMAGE=elbios/zonos-whisper:latest
+ZONOS_DEV_GPUS=all
 ```
 
 ---

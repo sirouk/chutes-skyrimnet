@@ -1,16 +1,16 @@
 import asyncio
 import os
-import signal
-import subprocess
 
 from chutes.chute import Chute, NodeSelector
 from chutes.image import Image
+from vendor_launcher import VendorProcessHandle, launch_vendor_process
 
 USERNAME = os.getenv("CHUTES_USERNAME", "skyrimnet")
 ENTRYPOINT = os.getenv("HIGGS_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh")
 SERVICE_PORT = int(os.getenv("HIGGS_HTTP_PORT", "7860"))
 WHISPER_PORT = int(os.getenv("HIGGS_WHISPER_PORT", "8080"))
 LOCAL_HOST = "127.0.0.1"
+VENDOR_IMAGE = os.getenv("HIGGS_VENDOR_IMAGE", "elbios/higgs-whisper:latest")
 
 
 async def wait_for_port(port: int, host: str = LOCAL_HOST, timeout: int = 300) -> None:
@@ -60,22 +60,34 @@ This chute launches `elbios/higgs-whisper:latest` and exposes the upstream Gradi
 )
 
 
+HIGGS_ENV_KEYS = [
+    "CUDA_VISIBLE_DEVICES",
+    "NVIDIA_VISIBLE_DEVICES",
+]
+HIGGS_ENV_PREFIXES = ["HIGGS_", "WHISPER_"]
+
+
 @chute.on_startup()
 async def boot(self):
-    self._entrypoint_proc = subprocess.Popen(["bash", "-lc", ENTRYPOINT])
+    self._vendor_handle: VendorProcessHandle = launch_vendor_process(
+        label="higgs",
+        entrypoint=ENTRYPOINT,
+        vendor_image=VENDOR_IMAGE,
+        service_ports=[SERVICE_PORT],
+        whisper_ports=[WHISPER_PORT],
+        env_keys=HIGGS_ENV_KEYS,
+        env_prefixes=HIGGS_ENV_PREFIXES,
+        dev_gpu_env="HIGGS_DEV_GPUS",
+    )
     await wait_for_port(SERVICE_PORT)
     await wait_for_port(WHISPER_PORT)
 
 
 @chute.on_shutdown()
 async def shutdown(self):
-    proc = getattr(self, "_entrypoint_proc", None)
-    if proc and proc.poll() is None:
-        proc.send_signal(signal.SIGTERM)
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+    handle = getattr(self, "_vendor_handle", None)
+    if handle:
+        handle.stop()
 
 
 @chute.cord(
