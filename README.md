@@ -21,19 +21,19 @@ All chutes expose:
 
 - **XTTS + Whisper**:
   - *Image*: base Python 3.12.9 image with `ffmpeg`, `espeak-ng`, and Python deps (`TTS`, `torch/torchaudio`, `faster-whisper`, `librosa`, `soundfile`). Bundles a local placeholder voice (`assets/default_voice.wav`) into `/app/assets/xtts_default.wav`.
-  - *Runtime*: inline Pydantic schemas, temporary audio helpers, XTTS generator with locking, and faster-whisper transcriber. `/speak` enforces text/script, supports optional voice cloning; `/transcribe` proxies faster-whisper.
+  - *Runtime*: inline Pydantic schemas, temporary audio helpers, XTTS generator with locking, and faster-whisper transcriber. `/speak` enforces text/script, supports optional voice cloning; `/transcribe` proxies faster-whisper. `NodeSelector` is pinned to Chutes-approved GPUs (`h100`, `h200`, `b200`).
 
 - **VibeVoice + Whisper**:
   - *Image*: installs `ffmpeg`, `vibevoice==0.0.1`, torch stack, `soundfile`, `librosa`, `faster-whisper`, and copies the same placeholder voice to `/app/assets/vibevoice_default.wav`.
-  - *Runtime*: script auto-formatting (adds “Speaker i” tags when needed), voice loading/resampling, CFG + token overrides, and a whisper endpoint. All helpers live inside the file.
+  - *Runtime*: script auto-formatting (adds “Speaker i” tags when needed), voice loading/resampling, CFG + token overrides, and a whisper endpoint. All helpers live inside the file. GPU selector includes only `h100`, `h100_sxm`, `h200` per platform rules.
 
 - **Higgs Audio + Whisper**:
   - *Image*: installs `ffmpeg` and pulls Boson’s `higgs-audio` repo at a fixed commit plus torch stack and whisper deps.
-  - *Runtime*: builds ChatML prompts (`boson_multimodal` helpers imported lazily), enforces text/script check, and returns expressive narration audio; whisper cord matches the others.
+  - *Runtime*: builds ChatML prompts (`boson_multimodal` helpers imported lazily), enforces text/script check, and returns expressive narration audio; whisper cord matches the others. Requests `h100_sxm`, `h100_nvl`, or `mi300x`.
 
 - **Zonos + Whisper**:
   - *Image*: adds `ffmpeg`, `espeak-ng`, `libespeak-ng1`, installs `zonos==0.1.0.dev0`, torch stack, whisper deps, and copies the placeholder voice to `/app/assets/zonos_default.wav`.
-  - *Runtime*: handles torchaudio resampling, voice cloning, CFG + max token overrides, and whisper transcription. Helpers are all embedded so the module is self-contained.
+  - *Runtime*: handles torchaudio resampling, voice cloning, CFG + max token overrides, and whisper transcription. Helpers are all embedded so the module is self-contained. GPU selector limited to `h100`, `h100_sxm`, `h200`.
 
 Each deploy script embeds its own request models, temporary audio helpers, and Whisper wrapper—no shared imports—so remote miners can run the lone `.py` file uploaded by `chutes build`.
 
