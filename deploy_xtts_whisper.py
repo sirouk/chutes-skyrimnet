@@ -190,7 +190,7 @@ image = (
         tag="0.0.1",
         readme="Private XTTS + Whisper chute for SkyrimNet voice services.",
     )
-    .from_base("parachutes/base-python:3.12.9")
+    .from_base("parachutes/base-python:3.11.9")
     .set_user("root")
     .run_command("apt-get update && apt-get install -y --no-install-recommends ffmpeg espeak-ng && rm -rf /var/lib/apt/lists/*")
     .set_user("chutes")

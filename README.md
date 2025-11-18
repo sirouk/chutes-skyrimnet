@@ -20,7 +20,7 @@ All chutes expose:
 ### Image / runtime notes
 
 - **XTTS + Whisper**:
-  - *Image*: base Python 3.12.9 image with `ffmpeg`, `espeak-ng`, and Python deps (`TTS`, `torch/torchaudio`, `faster-whisper`, `librosa`, `soundfile`). Bundles a local placeholder voice (`assets/default_voice.wav`) into `/app/assets/xtts_default.wav`.
+  - *Image*: base Python 3.11.9 image with `ffmpeg`, `espeak-ng`, and Python deps (`TTS`, `torch/torchaudio`, `faster-whisper`, `librosa`, `soundfile`). Bundles a local placeholder voice (`assets/default_voice.wav`) into `/app/assets/xtts_default.wav`.
   - *Runtime*: inline Pydantic schemas, temporary audio helpers, XTTS generator with locking, and faster-whisper transcriber. `/speak` enforces text/script, supports optional voice cloning; `/transcribe` proxies faster-whisper. `NodeSelector` is pinned to Chutes-approved GPUs (`h100`, `h200`, `b200`).
 
 - **VibeVoice + Whisper**:

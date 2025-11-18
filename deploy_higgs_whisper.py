@@ -188,7 +188,7 @@ image = (
         tag="0.0.1",
         readme="Boson Higgs Audio v2 with Whisper transcription.",
     )
-    .from_base("parachutes/base-python:3.12.9")
+    .from_base("parachutes/base-python:3.11.9")
     .set_user("root")
     .run_command("apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*")
     .set_user("chutes")
