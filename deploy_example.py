@@ -1,43 +1,179 @@
-# The following is an example chute deployment for the GLM-4.5-Air model from: https://chutes.ai/app/chute/7fa03c12-823f-529a-8245-36432f03e9a1?tab=source
+"""
+Generic Chute Deployment Template
 
+This template wraps a Docker image for deployment on Chutes.ai.
+Copy this file and customize the configuration section for your service.
+
+Usage:
+  1. Copy to deploy_<yourservice>.py
+  2. Update CHUTE_* variables for your service
+  3. Run route discovery: ./deploy.sh -> Build -> select module -> run discovery
+  4. Build and deploy: ./deploy.sh -> Build/Deploy
+"""
 import os
-from chutes.chute import NodeSelector
-from chutes.chute.template.sglang import build_sglang_chute
+from configparser import ConfigParser
 
-# speed up hf download
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+from chutes.chute import Chute, NodeSelector
 
-for key in ["NCCL_P2P_DISABLE", "NCCL_IB_DISABLE", "NCCL_NET_GDR_LEVEL"]:
-    if key in os.environ:
-        del os.environ[key]
-if os.getenv("CHUTES_EXECUTION_CONTEXT") == "REMOTE":
-    os.environ["TORCHINDUCTOR_CACHE_DIR"] = os.path.join(os.getenv("HF_HOME", "/cache"), "glmairtic")
-
-chute = build_sglang_chute(
-    username="your_chutes_username",
-    readme="zai-org/GLM-4.5-Air",
-    model_name="zai-org/GLM-4.5-Air",
-    image="chutes/sglang:nightly-2025110402",
-    concurrency=40,
-    revision="e7fdb9e0a52d2e0aefea94f5867c924a32a78d17",
-    node_selector=NodeSelector(
-        gpu_count=8,
-        include=[
-            "h100",
-            "h100_sxm",
-            "h800",
-            "l40s",
-            "a6000_ada",
-            "a100",
-            "a100_sxm",
-            "a100_40gb",
-            "a100_40gb_sxm",
-            "h20",
-        ],
-    ),
-    engine_args=(
-        "--cuda-graph-max-bs 40 "
-        "--tool-call-parser glm45 "
-        "--reasoning-parser glm45"
-    ),
+from tools.chute_wrappers import (
+    build_wrapper_image,
+    load_route_manifest,
+    register_passthrough_routes,
+    wait_for_services,
+    probe_services,
 )
+
+# =============================================================================
+# Auth Configuration (auto-loaded from ~/.chutes/config.ini or environment)
+# =============================================================================
+chutes_config = ConfigParser()
+chutes_config.read(os.path.expanduser("~/.chutes/config.ini"))
+USERNAME = os.getenv("CHUTES_USERNAME") or chutes_config.get("auth", "username", fallback="chutes")
+
+# =============================================================================
+# Chute Configuration - CUSTOMIZE THESE FOR YOUR SERVICE
+# =============================================================================
+
+# Basic identification
+CHUTE_NAME = "example-service"
+CHUTE_TAG = "v0.1.0"
+CHUTE_BASE_IMAGE = os.getenv("CHUTE_BASE_IMAGE", "your-registry/your-image:latest")
+
+# Human-readable metadata
+CHUTE_TAGLINE = "Example Service (customize this)"
+CHUTE_DOC = """
+### Example Service
+
+Describe your service here. This appears in the Chutes.ai UI.
+
+#### Endpoints
+- GET /health - Health check
+- POST /your-endpoint - Your endpoint description
+"""
+
+# Chute environment variables (passed to container during discovery and runtime)
+# Add any env vars your base image needs
+CHUTE_ENV = {
+    # "MODEL_NAME": "your-model",
+    # "WHISPER_MODEL": "large-v3-turbo",
+}
+
+# Static routes (always included, merged with discovered routes)
+# Use this for services that don't expose OpenAPI specs (e.g., whisper.cpp server)
+# See: https://github.com/ggml-org/whisper.cpp/tree/master/examples/server
+CHUTE_STATIC_ROUTES = [
+    # {"path": "/inference", "method": "POST", "port": 8080, "target_path": "/inference"},
+    # {"path": "/load", "method": "GET", "port": 8080, "target_path": "/load"},
+    # {"path": "/v1/audio/transcriptions", "method": "POST", "port": 8080, "target_path": "/inference"},
+]
+
+# =============================================================================
+# Resource Configuration - Adjust based on your service requirements
+# =============================================================================
+CHUTE_GPU_COUNT = int(os.getenv("CHUTE_GPU_COUNT", "1"))
+CHUTE_MIN_VRAM_GB_PER_GPU = int(os.getenv("CHUTE_MIN_VRAM_GB_PER_GPU", "16"))
+CHUTE_INCLUDE_GPU_TYPES = os.getenv(
+    "CHUTE_INCLUDE_GPU_TYPES",
+    "rtx4090,rtx3090,a100,a100_sxm,h100,h100_sxm"
+).split(",")
+CHUTE_SHUTDOWN_AFTER_SECONDS = int(os.getenv("CHUTE_SHUTDOWN_AFTER_SECONDS", "3600"))
+CHUTE_CONCURRENCY = int(os.getenv("CHUTE_CONCURRENCY", "1"))
+
+# =============================================================================
+# Network Configuration
+# =============================================================================
+LOCAL_HOST = "127.0.0.1"
+# Comma-separated list of ports your service exposes
+SERVICE_PORTS = [int(p.strip()) for p in os.getenv("CHUTE_PORTS", "8080").split(",") if p.strip()]
+if not SERVICE_PORTS:
+    raise RuntimeError("CHUTE_PORTS must specify at least one port")
+DEFAULT_SERVICE_PORT = SERVICE_PORTS[0]
+
+# Entrypoint script in the base image (if any)
+ENTRYPOINT = os.getenv("CHUTE_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh")
+
+# =============================================================================
+# Image Build Configuration
+# =============================================================================
+# build_wrapper_image sets up a Debian-based image with Chutes runtime deps.
+# It extends your CHUTE_BASE_IMAGE with necessary tooling.
+
+image = build_wrapper_image(
+    username=USERNAME,
+    name=CHUTE_NAME,
+    tag=CHUTE_TAG,
+    base_image=CHUTE_BASE_IMAGE,
+)
+
+# =============================================================================
+# Chute Definition
+# =============================================================================
+
+chute = Chute(
+    username=USERNAME,
+    name=CHUTE_NAME,
+    tagline=CHUTE_TAGLINE,
+    readme=CHUTE_DOC,
+    image=image,
+    node_selector=NodeSelector(
+        gpu_count=CHUTE_GPU_COUNT,
+        min_vram_gb_per_gpu=CHUTE_MIN_VRAM_GB_PER_GPU,
+        include=CHUTE_INCLUDE_GPU_TYPES,
+    ),
+    concurrency=CHUTE_CONCURRENCY,
+    allow_external_egress=True,
+    shutdown_after_seconds=CHUTE_SHUTDOWN_AFTER_SECONDS,
+)
+
+# Register routes from manifest (generated by route discovery)
+# Static routes are merged with discovered routes (duplicates are skipped)
+# If no manifest exists yet, run: ./deploy.sh -> Build -> run discovery
+register_passthrough_routes(chute, load_route_manifest(static_routes=CHUTE_STATIC_ROUTES), DEFAULT_SERVICE_PORT)
+
+
+# =============================================================================
+# Lifecycle Hooks
+# =============================================================================
+
+@chute.on_startup()
+async def boot(self):
+    """Wait for all service ports to be ready before accepting requests."""
+    await wait_for_services(SERVICE_PORTS, host=LOCAL_HOST, timeout=600)
+
+
+# @chute.on_shutdown()
+# async def shutdown(self):
+#     """Gracefully terminate services (optional)."""
+#     pass
+
+
+# =============================================================================
+# Health Check Endpoint
+# =============================================================================
+
+@chute.cord(public_api_path="/health", public_api_method="GET", method="GET")
+async def health_check(self) -> dict:
+    """Check if all services are healthy."""
+    errors = await probe_services(SERVICE_PORTS, host=LOCAL_HOST, timeout=5)
+    if errors:
+        return {"status": "unhealthy", "errors": errors}
+    return {"status": "healthy", "ports": SERVICE_PORTS}
+
+
+# =============================================================================
+# Local Testing
+# =============================================================================
+
+if __name__ == "__main__":
+    print(f"Chute: {chute.name}")
+    print(f"Image: {image.name}:{image.tag}")
+    print(f"Base Image: {CHUTE_BASE_IMAGE}")
+    print(f"Service Ports: {SERVICE_PORTS}")
+    print(f"GPU: {CHUTE_GPU_COUNT}x (min {CHUTE_MIN_VRAM_GB_PER_GPU}GB VRAM)")
+    print(f"Concurrency: {CHUTE_CONCURRENCY}")
+    print(f"\nEnvironment:")
+    for k, v in CHUTE_ENV.items():
+        print(f"  {k}={v}")
+    print(f"\nCords:")
+    for cord in chute.cords:
+        print(f"  {cord._public_api_method:6} {cord._public_api_path} -> port {cord._passthrough_port or 'N/A'}")
