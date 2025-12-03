@@ -1,344 +1,137 @@
-import asyncio
 import os
-from typing import Dict
-from urllib.parse import urlencode
-
-import httpx
-from fastapi import HTTPException, Request, Response
+import signal
+import subprocess
+from configparser import ConfigParser
 
 from chutes.chute import Chute, NodeSelector
-from chutes.image import Image
 
-USERNAME = os.getenv("CHUTES_USERNAME", "skyrimnet")
-ENTRYPOINT = os.getenv("XTTS_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh")
-XTTS_PORT = int(os.getenv("XTTS_HTTP_PORT", "8020"))
-WHISPER_PORT = int(os.getenv("XTTS_WHISPER_PORT", "8080"))
+from tools.chute_wrappers import (
+    build_wrapper_image,
+    load_route_manifest,
+    parse_service_ports,
+    register_passthrough_routes,
+    wait_for_services,
+    probe_services,
+)
+
+chutes_config = ConfigParser()
+chutes_config.read(os.path.expanduser("~/.chutes/config.ini"))
+USERNAME = os.getenv("CHUTES_USERNAME") or chutes_config.get("auth", "username", fallback="chutes")
+CHUTE_GPU_COUNT = int(os.getenv("CHUTE_GPU_COUNT", "1"))
+CHUTE_MIN_VRAM_GB_PER_GPU = int(os.getenv("CHUTE_MIN_VRAM_GB_PER_GPU", "16"))
+CHUTE_INCLUDE_GPU_TYPES = os.getenv("CHUTE_INCLUDE_GPU_TYPES", "rtx4090,rtx3090,a100").split(",")
+CHUTE_SHUTDOWN_AFTER_SECONDS = int(os.getenv("CHUTE_SHUTDOWN_AFTER_SECONDS", "3600"))
+CHUTE_CONCURRENCY = int(os.getenv("CHUTE_CONCURRENCY", "4"))
+
 LOCAL_HOST = "127.0.0.1"
-XTTS_BASE = f"http://{LOCAL_HOST}:{XTTS_PORT}"
-WHISPER_BASE = f"http://{LOCAL_HOST}:{WHISPER_PORT}"
+SERVICE_PORTS = [int(p.strip()) for p in os.getenv("CHUTE_PORTS", "8020,8080").split(",") if p.strip()]
+if not SERVICE_PORTS:
+    raise RuntimeError("CHUTE_PORTS must specify at least one port")
+DEFAULT_SERVICE_PORT = SERVICE_PORTS[0]
+ENTRYPOINT = os.getenv("CHUTE_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh")
 
+CHUTE_BASE_IMAGE = os.getenv("CHUTE_BASE_IMAGE", "elbios/xtts-whisper:latest")
+CHUTE_NAME = "xtts-whisper"
+CHUTE_TAG = "tts-stt-v0.1.1"
 
-async def wait_for_port(port: int, host: str = LOCAL_HOST, timeout: int = 240) -> None:
-    """Poll until the containerised service starts listening on `port`."""
-    deadline = asyncio.get_running_loop().time() + timeout
-    while True:
-        try:
-            reader, writer = await asyncio.open_connection(host, port)
-            writer.close()
-            await writer.wait_closed()
-            return
-        except OSError:
-            if asyncio.get_running_loop().time() >= deadline:
-                raise RuntimeError(f"Timed out waiting for {host}:{port}")
-            await asyncio.sleep(2)
+# Chute environment variables (used during discovery and runtime)
+CHUTE_ENV = {
+    "WHISPER_MODEL": "large-v3-turbo",
+    "XTTS_MODEL_ID": "tts_models/multilingual/multi-dataset/xtts_v2",
+}
 
+# Static routes (always included, merged with discovered routes)
+# Whisper.cpp server doesn't expose OpenAPI, so define routes manually
+# See: https://github.com/ggml-org/whisper.cpp/tree/master/examples/server
+CHUTE_STATIC_ROUTES = [
+    {"path": "/inference", "method": "POST", "port": 8080, "target_path": "/inference"},
+    {"path": "/load", "method": "GET", "port": 8080, "target_path": "/load"},
+    {"path": "/load", "method": "POST", "port": 8080, "target_path": "/load"},
+    # OpenAI-compatible alias
+    {"path": "/v1/audio/transcriptions", "method": "POST", "port": 8080, "target_path": "/inference"},
+]
+CHUTE_TAGLINE = "elbios/xtts-whisper (XTTS + Whisper.cpp)"
+CHUTE_README = "Wrapper image that ships the latest elbios/xtts-whisper for deployment on Chutes."
+CHUTE_DOC = """
+### XTTS + Whisper Wrapper
 
-image = (
-    Image(
-        username=USERNAME,
-        name="xtts-whisper",
-        tag="wrap-1.0.0",
-        readme="Wrapper image that reuses elbios/xtts-whisper and adds the Chutes runtime.",
-    )
-    .from_base("elbios/xtts-whisper:latest")
-    .run_command("pip install --no-cache-dir chutes httpx python-multipart fastapi")
+This chute boots the upstream `elbios/xtts-whisper:latest` image and proxies its
+service endpoints via Chutes cords.
+
+#### XTTS Endpoints (TTS - Text to Speech)
+- POST /tts_to_audio - Generate audio from text
+- POST /tts_stream - Stream audio generation
+- GET /speakers_list - List available speakers
+- POST /clone_speaker - Clone a speaker voice
+- POST /set_tts_settings - Configure TTS settings
+
+#### Whisper Endpoints (STT - Speech to Text)
+- POST /inference - Transcribe audio to text
+- GET /load - Load/check model status
+"""
+
+# =============================================================================
+# Image Build Configuration
+# =============================================================================
+# These build steps set up a Debian-based image for Chutes runtime.
+# Adjust CHUTE_BASE_IMAGE to reuse with other elbios/* or compatible images.
+
+image = build_wrapper_image(
+    username=USERNAME,
+    name=CHUTE_NAME,
+    tag=CHUTE_TAG,
+    base_image=CHUTE_BASE_IMAGE,
 )
 
 chute = Chute(
     username=USERNAME,
-    name="xtts-whisper",
-    tagline="Pass-through wrapper for elbios/xtts-whisper (XTTS + Whisper.cpp).",
-    readme="""
-### XTTS + Whisper Wrapper
-
-This chute boots the upstream `elbios/xtts-whisper:latest` image and simply proxies its
-service endpoints via Chutes cords. No model weights or helpers live in this repo any
-longer — everything runs inside the vendor image.
-
-**Exposed cords**
-1. `GET /speakers/` → `GET http://127.0.0.1:8020/speakers/`
-2. `POST /tts_to_audio/` → `POST http://127.0.0.1:8020/tts_to_audio/` (returns `audio/wav`)
-3. `POST /v1/audio/transcriptions` → `POST http://127.0.0.1:8080/inference` (multipart passthrough)
-""",
+    name=CHUTE_NAME,
+    tagline=CHUTE_TAGLINE,
+    readme=CHUTE_DOC,
     image=image,
-    node_selector=NodeSelector(gpu_count=1, min_vram_gb_per_gpu=16),
-    concurrency=4,
+    node_selector=NodeSelector(gpu_count=CHUTE_GPU_COUNT, min_vram_gb_per_gpu=CHUTE_MIN_VRAM_GB_PER_GPU, include=CHUTE_INCLUDE_GPU_TYPES),
+    concurrency=CHUTE_CONCURRENCY,
     allow_external_egress=True,
-    shutdown_after_seconds=3600,
+    shutdown_after_seconds=CHUTE_SHUTDOWN_AFTER_SECONDS,
 )
+
+register_passthrough_routes(chute, load_route_manifest(static_routes=CHUTE_STATIC_ROUTES), DEFAULT_SERVICE_PORT)
 
 
 @chute.on_startup()
 async def boot(self):
-    try:
-        self._entrypoint_proc = subprocess.Popen(["bash", "-lc", ENTRYPOINT])
-    except FileNotFoundError as exc:
-        raise RuntimeError(
-            f"XTTS entrypoint '{ENTRYPOINT}' not found. "
-            "Ensure this script exists in the base image or override XTTS_ENTRYPOINT."
-        ) from exc
-    await wait_for_port(XTTS_PORT)
-    await wait_for_port(WHISPER_PORT)
+    """
+    Check if XTTS and Whisper services are ready.
+    """
+    await wait_for_services(SERVICE_PORTS, host=LOCAL_HOST, timeout=600)
 
 
-@chute.on_shutdown()
-async def shutdown(self):
-    proc = getattr(self, "_entrypoint_proc", None)
-    if proc and proc.poll() is None:
-        proc.send_signal(signal.SIGTERM)
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+# @chute.on_shutdown()
+# async def shutdown(self):
+#     """Gracefully terminate the entrypoint process."""
+#     logger.info("✅ Services stopped.")
 
 
-@chute.cord(
-    public_api_path="/speakers",
-    public_api_method="GET",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/speakers",
-)
-async def speakers(self): ...
+# =============================================================================
+# Health Check
+# =============================================================================
+
+@chute.cord(public_api_path="/health", public_api_method="GET", method="GET")
+async def health_check(self) -> dict:
+    """Check if both services are healthy."""
+    errors = await probe_services(SERVICE_PORTS, host=LOCAL_HOST, timeout=5)
+    if errors:
+        return {"status": "unhealthy", "errors": errors}
+    return {"status": "healthy", "ports": SERVICE_PORTS}
 
 
-@chute.cord(
-    public_api_path="/speakers_list",
-    public_api_method="GET",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/speakers_list",
-)
-async def speakers_list(self): ...
-
-
-@chute.cord(
-    public_api_path="/languages",
-    public_api_method="GET",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/languages",
-)
-async def languages(self): ...
-
-
-@chute.cord(
-    public_api_path="/get_folders",
-    public_api_method="GET",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/get_folders",
-)
-async def folders(self): ...
-
-
-@chute.cord(
-    public_api_path="/get_models_list",
-    public_api_method="GET",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/get_models_list",
-)
-async def models_list(self): ...
-
-
-@chute.cord(
-    public_api_path="/get_tts_settings",
-    public_api_method="GET",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/get_tts_settings",
-)
-async def tts_settings(self): ...
-
-
-def _strip_hop_headers(headers: Dict[str, str]) -> Dict[str, str]:
-    hop_headers = {
-        "host",
-        "content-length",
-        "connection",
-        "keep-alive",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "te",
-        "trailers",
-        "transfer-encoding",
-        "upgrade",
-        "accept-encoding",
-    }
-    return {k: v for k, v in headers.items() if k.lower() not in hop_headers}
-
-
-def _append_query(url: str, request: Request) -> str:
-    if not request.url.query:
-        return url
-    separator = "&" if "?" in url else "?"
-    return f"{url}{separator}{request.url.query}"
-
-
-async def _proxy_request(
-    request: Request, target_url: str, include_query: bool = True
-) -> Response:
-    url = _append_query(target_url, request) if include_query else target_url
-    headers = _strip_hop_headers(dict(request.headers))
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
-            resp = await client.request(
-                method=request.method,
-                url=url,
-                headers=headers,
-                content=await request.body(),
-            )
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502, detail=f"XTTS passthrough failed: {exc}"
-        ) from exc
-    return Response(
-        content=resp.content,
-        status_code=resp.status_code,
-        media_type=resp.headers.get("content-type"),
-        headers={
-            key: value
-            for key, value in resp.headers.items()
-            if key.lower() in {"content-type", "content-length"}
-        },
-    )
-
-
-@chute.cord(
-    public_api_path="/sample",
-    public_api_method="GET",
-    output_content_type="audio/wav",
-)
-async def sample(self, request: Request):
-    params = list(request.query_params.multi_items())
-    file_path = None
-    filtered: Dict[str, str] = {}
-    for key, value in params:
-        if key == "path" and file_path is None:
-            file_path = value
-        else:
-            filtered.setdefault(key, value)
-    if not file_path:
-        raise HTTPException(
-            status_code=400,
-            detail="Query parameter `path` (relative file path) is required.",
-        )
-    target = f"{XTTS_BASE}/sample/{file_path}"
-    if filtered:
-        target = f"{target}?{urlencode(filtered, doseq=True)}"
-    return await _proxy_request(request, target, include_query=False)
-
-
-@chute.cord(
-    public_api_path="/set_output",
-    public_api_method="POST",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/set_output",
-)
-async def set_output(self): ...
-
-
-@chute.cord(
-    public_api_path="/set_speaker_folder",
-    public_api_method="POST",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/set_speaker_folder",
-)
-async def set_speaker_folder(self): ...
-
-
-@chute.cord(
-    public_api_path="/switch_model",
-    public_api_method="POST",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/switch_model",
-)
-async def switch_model(self): ...
-
-
-@chute.cord(
-    public_api_path="/set_tts_settings",
-    public_api_method="POST",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/set_tts_settings",
-)
-async def set_tts_settings(self): ...
-
-
-@chute.cord(
-    public_api_path="/tts_to_audio/",
-    public_api_method="POST",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/tts_to_audio/",
-    output_content_type="audio/wav",
-)
-async def tts_to_audio(self): ...
-
-
-@chute.cord(
-    public_api_path="/tts_to_file",
-    public_api_method="POST",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/tts_to_file",
-)
-async def tts_to_file(self): ...
-
-
-@chute.cord(
-    public_api_path="/tts_stream",
-    public_api_method="GET",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/tts_stream",
-    output_content_type="audio/x-wav",
-)
-async def tts_stream(self): ...
-
-
-@chute.cord(
-    public_api_path="/create_latents",
-    public_api_method="POST",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/create_latents",
-    output_content_type="application/json",
-)
-async def create_latents(self): ...
-
-
-@chute.cord(
-    public_api_path="/store_latents",
-    public_api_method="POST",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/store_latents",
-)
-async def store_latents(self): ...
-
-
-@chute.cord(
-    public_api_path="/create_and_store_latents",
-    public_api_method="POST",
-    passthrough=True,
-    passthrough_port=XTTS_PORT,
-    passthrough_path="/create_and_store_latents",
-    output_content_type="application/json",
-)
-async def create_and_store_latents(self): ...
-
-
-@chute.cord(
-    public_api_path="/v1/audio/transcriptions",
-    public_api_method="POST",
-    passthrough=True,
-    passthrough_port=WHISPER_PORT,
-    passthrough_path="/inference",
-)
-async def transcribe(self): ...
+# =============================================================================
+# LOCAL TESTING
+# =============================================================================
+if __name__ == "__main__":
+    print(f"Chute: {chute.name}")
+    print(f"Image: {image.name}:{image.tag}")
+    print(f"Service Ports: {SERVICE_PORTS}")
+    print("\nCords:")
+    for cord in chute.cords:
+        print(f"  {cord._public_api_method:6} {cord._public_api_path} -> port {cord._passthrough_port or 'N/A'}")
