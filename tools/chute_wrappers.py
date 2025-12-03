@@ -50,7 +50,7 @@ def build_wrapper_image(username: str, name: str, tag: str, base_image: str) -> 
             tag=tag,
         )
         .from_base(base_image)
-        .with_python("3.12.12")
+        # .with_python(PYTHON_VERSION) # Uncomment this to use a specific Python version, otherwise use image's default
         .with_env("DEBIAN_FRONTEND", "noninteractive")
         .with_env("NEEDRESTART_SUSPEND", "y")
         .run_command("apt update && apt -y upgrade && apt autoclean -y && apt -y autoremove")
