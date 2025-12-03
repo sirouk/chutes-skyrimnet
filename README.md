@@ -1,166 +1,193 @@
-# Private Chutes Reference
+# SkyrimNet Voice Chutes
 
-Concise guide for the SkyrimNet TTS/STT chute bundle. Everything important lives in this repo (`deploy_*.py`, `setup.sh`, `deploy.sh`, `env.example`, `config.ini.example`). For a high-level walkthrough of why we’re building these private voice chutes, see the short explainer video on YouTube [[link](https://www.youtube.com/watch?v=bM10Ca_pbDc)]. For full CLI docs see https://chutes.ai/docs.
+TTS/STT chute bundle wrapping Docker images for deployment on [Chutes.ai](https://chutes.ai). For a walkthrough of why we're building these private voice chutes, see the [YouTube explainer](https://www.youtube.com/watch?v=bM10Ca_pbDc).
 
 ---
 
-## Chutes overview
+## Quick Start
 
-| Module | Description | Suggested GPU | Build command |
-| --- | --- | --- | --- |
-| `deploy_xtts_whisper.py` | Wrapper for `elbios/xtts-whisper:latest` (Coqui XTTS + Whisper.cpp). | ≥16 GB VRAM | `chutes build deploy_xtts_whisper:chute --wait` |
-| `deploy_vibevoice_whisper.py` | Wrapper for `elbios/vibevoice-whisper:latest` (VibeVoice + Whisper.cpp). | ≥24 GB VRAM | `chutes build deploy_vibevoice_whisper:chute --wait` |
-| `deploy_higgs_whisper.py` | Wrapper for `elbios/higgs-whisper:latest` (Boson Higgs Audio + Whisper.cpp). | ≥32 GB VRAM | `chutes build deploy_higgs_whisper:chute --wait` |
-| `deploy_zonos_whisper.py` | Wrapper for `elbios/zonos-whisper:latest` (Zyphra Zonos + Whisper.cpp). | ≥24 GB VRAM | `chutes build deploy_zonos_whisper:chute --wait` |
+```bash
+# 1. Setup environment (creates .venv, installs deps, registers with Chutes)
+./setup.sh
 
-Each chute now **starts the upstream Docker image verbatim** and exposes its HTTP API through thin
-Chutes cords. Nothing is re-implemented inside this repo; we simply forward requests/responses.
-
-### Runtime summary / exposed cords
-
-- **XTTS + Whisper** (`deploy_xtts_whisper.py`)
-  - Ports 8020 (XTTS FastAPI) + 8080 (Whisper.cpp)
-  - Every FastAPI route provided by `xtts_api_server` is exposed via passthrough cords:
-    `/speakers`, `/speakers_list`, `/languages`, `/get_folders`,
-    `/get_models_list`, `/get_tts_settings`, `/sample?path=...` (proxy for `/sample/{file_path}`), `/set_output`,
-    `/set_speaker_folder`, `/switch_model`, `/set_tts_settings`, `/tts_stream`,
-    `/tts_to_audio/`, `/tts_to_file`, `/create_latents`, `/store_latents`,
-    `/create_and_store_latents`, plus Whisper’s `POST /v1/audio/transcriptions`.
-
-- **VibeVoice + Whisper** (`deploy_vibevoice_whisper.py`)
-  - Ports 7860 (Gradio wrapper) + 8080 (Whisper.cpp)
-  - Passthrough cords: `POST /api/generate_audio`, `/queue/join`, `/queue/status`,
-    `/v1/audio/transcriptions`
-
-- **Higgs Audio + Whisper** (`deploy_higgs_whisper.py`)
-  - Same passthrough set as VibeVoice (`/api/generate_audio`, `/queue/*`, `/v1/audio/transcriptions`)
-
-- **Zonos + Whisper** (`deploy_zonos_whisper.py`)
-  - Ports 7860 (Blocks UI) + 8080 (Whisper.cpp)
-  - Passthrough cords: `POST /api/generate_audio`, `/api/predict/`, `/queue/join`,
-    `/queue/status`, `GET /file`, `POST /v1/audio/transcriptions`
-
-Most cords use Chutes’ native **passthrough** mode, so requests go straight to the vendor process already
-running inside the Docker image. The lone exception is the XTTS sample-download endpoint
-(`/sample/{file_path}`), which needs a tiny helper because of its path wildcard; that helper still forwards
-the payload verbatim. Either way, keep sending the **exact JSON / multipart bodies** those services
-document (Gradio queue payloads, Whisper form uploads, etc.).
-
-Environment variables (`env.example` → `.env`):
-```
-CHUTES_USERNAME=skyrimnet
-
-# optional overrides if the upstream images ever change their entrypoints/ports
-XTTS_ENTRYPOINT=/usr/local/bin/docker-entrypoint.sh
-XTTS_HTTP_PORT=8020
-XTTS_WHISPER_PORT=8080
-
-VIBEVOICE_ENTRYPOINT=/usr/local/bin/docker-entrypoint.sh
-VIBEVOICE_HTTP_PORT=7860
-VIBEVOICE_WHISPER_PORT=8080
-VIBEVOICE_WHISPER_MODEL=medium.en
-
-HIGGS_ENTRYPOINT=/usr/local/bin/docker-entrypoint.sh
-HIGGS_HTTP_PORT=7860
-HIGGS_WHISPER_PORT=8080
-
-ZONOS_ENTRYPOINT=/usr/local/bin/docker-entrypoint.sh
-ZONOS_HTTP_PORT=7860
-ZONOS_WHISPER_PORT=8080
+# 2. Activate and use deploy.sh for everything else
+source .venv/bin/activate
+./deploy.sh
 ```
 
 ---
 
-## Workflow (see `deploy.sh`)
+## Chutes Overview
 
-1. **Bootstrap CLI** (`setup.sh`): create `.venv`, install `chutes`/`bittensor`, run `chutes register`. Copy `config.ini.example` → `~/.chutes/config.ini` (or keep a local `.config.ini`) and fill in your real username, IDs, and addresses.
-2. **Study/update a chute**: edit env vars at top of `deploy_*.py` if needed (username, model IDs, etc.).
-3. **Local build (mandatory right after edits)**:
-   ```bash
-   CHUTES_USERNAME=<you> chutes build deploy_xtts_whisper:chute --local --wait
-   ```
-   Repeat for the other modules as needed (swap `xtts` with `vibevoice`, `higgs`, `zonos`). `--local --wait` ensures Docker completes before moving on.
-4. **Inspect the wrapped vendor images directly** (repeat for every chute):
-   ```bash
-   docker run --rm xtts-whisper:wrap-1.0.0
-   docker run --rm vibevoice-whisper:wrap-1.0.0
-   docker run --rm higgs-whisper:wrap-1.0.0
-   docker run --rm zonos-whisper:wrap-1.0.0
-   ```
-   Watch the logs to confirm each upstream entrypoint downloads models and binds its ports.
-5. **Optional dev server**:
-   ```bash
-   chutes run deploy_xtts_whisper:chute --dev --port 8000 --debug
-   ```
-   Local runs execute via `/usr/bin/docker`. On macOS, symlink `/usr/local/bin/docker` → `/usr/bin/docker` if missing.
-6. **Remote build** (required before deploy):
-   ```bash
-   chutes build deploy_xtts_whisper:chute --wait
-   ```
-   API enforces ≥$50 USD balance (in addition to TAO fees) before accepting an image upload.
-7. **Deploy**:
-   ```bash
-   chutes deploy deploy_xtts_whisper:chute --accept-fee [--public]
-   chutes chutes list
-   chutes chutes get <chute-name>
-   ```
-   Use the other CLI commands as needed (`chutes report`, `chutes warmup`, etc.).
+| Module | Base Image | Ports | GPU |
+|--------|-----------|-------|-----|
+| `deploy_xtts_whisper.py` | `elbios/xtts-whisper:latest` | 8020 (XTTS) + 8080 (Whisper) | ≥16 GB |
+| `deploy_vibevoice_whisper.py` | `elbios/vibevoice-whisper:latest` | 7860 (Gradio) + 8080 (Whisper) | ≥24 GB |
+| `deploy_higgs_whisper.py` | `elbios/higgs-whisper:latest` | 7860 (Gradio) + 8080 (Whisper) | ≥32 GB |
+| `deploy_zonos_whisper.py` | `elbios/zonos-whisper:latest` | 7860 (Gradio) + 8080 (Whisper) | ≥24 GB |
 
-`deploy.sh` contains the ordered shell sequence (study → local build → local run → remote build → deploy). `setup.sh` explains registration with sanitized instructions.
+Each chute wraps the upstream Docker image and exposes its HTTP API via passthrough cords.
 
 ---
 
-## Payloads / testing
+## Workflow
 
-Use the vendor’s own documentation (or live Gradio UI) for request bodies and workflows. Because we
-simply proxy HTTP, any payload that worked against the original container will work against the
-Chutes-hosted endpoint. For local smoke tests you can still run `chutes run <module>:chute --dev`,
-but note that the upstream servers expect a GPU and will fail-fast on CPU-only machines.
+### 1. Setup (`./setup.sh`)
+
+Interactive wizard that:
+- Installs `uv` if missing
+- Creates `.venv` with Python 3.11
+- Installs `chutes` and `bittensor<8`
+- Helps create/manage Bittensor wallets
+- Runs `chutes register` for account setup
+
+Options: `--force`, `--non-interactive`, `--wallet-name NAME`
+
+### 2. Deploy (`./deploy.sh`)
+
+Interactive menu with options:
+
+| Option | Description |
+|--------|-------------|
+| 1. List images | Show built Docker images |
+| 2. List chutes | Show deployed chutes |
+| 3. Build chute | Local or remote build (prompts for route discovery first) |
+| 4. Run in Docker | Run wrapped image with GPU (for testing) |
+| 5. Run dev mode | Run on host (Python chutes) |
+| 6. Deploy chute | Deploy to Chutes.ai |
+| 7. Chute status | Get status of a deployed chute |
+| 8. Delete chute | Remove a deployed chute |
+| 9. Account info | Show username and payment address |
+
+Or use flags directly:
+
+```bash
+./deploy.sh --discover deploy_xtts_whisper    # Discover routes from running container
+./deploy.sh --build deploy_xtts_whisper --local
+./deploy.sh --run-docker deploy_xtts_whisper  # Run in Docker with GPU
+./deploy.sh --deploy deploy_xtts_whisper --accept-fee
+./deploy.sh --status xtts-whisper
+```
+
+### 3. Route Discovery
+
+Routes are auto-discovered from running containers:
+
+```bash
+./deploy.sh --discover deploy_xtts_whisper
+```
+
+This:
+1. Starts the base Docker image with GPU
+2. Probes for OpenAPI endpoints (`/openapi.json`, `/docs.json`, etc.)
+3. Generates `deploy_xtts_whisper.routes.json`
+
+For services without OpenAPI (like whisper.cpp), define static routes in `CHUTE_STATIC_ROUTES`.
 
 ---
 
-## Repository layout
+## Deploy Script Structure
+
+Each `deploy_*.py` follows this pattern:
+
+```python
+from chutes.chute import Chute, NodeSelector
+from tools.chute_wrappers import (
+    build_wrapper_image, load_route_manifest,
+    register_passthrough_routes, wait_for_services, probe_services,
+)
+
+# Identification
+CHUTE_NAME = "xtts-whisper"
+CHUTE_TAG = "tts-stt-v0.1.1"
+CHUTE_BASE_IMAGE = "elbios/xtts-whisper:latest"
+SERVICE_PORTS = [8020, 8080]
+
+# Environment variables (used during discovery and runtime)
+CHUTE_ENV = {
+    "WHISPER_MODEL": "large-v3-turbo",
+    "XTTS_MODEL_ID": "tts_models/multilingual/multi-dataset/xtts_v2",
+}
+
+# Static routes (for services without OpenAPI, merged with discovered routes)
+CHUTE_STATIC_ROUTES = [
+    {"path": "/inference", "method": "POST", "port": 8080, "target_path": "/inference"},
+    {"path": "/v1/audio/transcriptions", "method": "POST", "port": 8080, "target_path": "/inference"},
+]
+
+# Build image
+image = build_wrapper_image(USERNAME, CHUTE_NAME, CHUTE_TAG, CHUTE_BASE_IMAGE)
+
+# Create chute
+chute = Chute(
+    username=USERNAME,
+    name=CHUTE_NAME,
+    image=image,
+    node_selector=NodeSelector(gpu_count=1, min_vram_gb_per_gpu=16),
+)
+
+# Register routes
+register_passthrough_routes(chute, load_route_manifest(static_routes=CHUTE_STATIC_ROUTES), SERVICE_PORTS[0])
+
+@chute.on_startup()
+async def boot(self):
+    await wait_for_services(SERVICE_PORTS, timeout=600)
+
+@chute.cord(public_api_path="/health", public_api_method="GET", method="GET")
+async def health_check(self) -> dict:
+    errors = await probe_services(SERVICE_PORTS, timeout=5)
+    return {"status": "unhealthy", "errors": errors} if errors else {"status": "healthy"}
+```
+
+---
+
+## Repository Layout
 
 ```
 .
-├── deploy_xtts_whisper.py
-├── deploy_vibevoice_whisper.py
-├── deploy_higgs_whisper.py
-├── deploy_zonos_whisper.py
-├── deploy_example.py
-├── deploy.sh
-├── setup.sh
-├── env.example
-├── config.ini.example # dummy template
-├── README.md
-└── .gitignore
+├── setup.sh                         # Environment setup wizard
+├── deploy.sh                        # Interactive deploy CLI
+├── config.ini.example               # Chutes config template
+├── deploy_xtts_whisper.py           # XTTS + Whisper chute
+├── deploy_vibevoice_whisper.py      # VibeVoice + Whisper chute
+├── deploy_higgs_whisper.py          # Higgs Audio + Whisper chute
+├── deploy_zonos_whisper.py          # Zonos + Whisper chute
+├── deploy_example.py                # Template for new chutes
+├── deploy_*.routes.json             # Generated route manifests (gitignored)
+├── tools/
+│   ├── chute_wrappers.py            # Image building & route registration
+│   └── discover_routes.py           # Route auto-discovery
+└── README.md
 ```
-
-No vendored `chutes/` directory is kept—scripts rely on the `chutes` package installed via pip.
 
 ---
 
-## Frequently used commands
+## Helper Functions (`tools/chute_wrappers.py`)
 
-```bash
-chutes build <module>:chute --local --debug       # local Docker build
-chutes build <module>:chute --wait                # remote build (needs ≥$50 balance)
-chutes run <module>:chute --dev --dev-job-data-path test_job.json
-chutes deploy <module>:chute --accept-fee [--public]
-chutes chutes list && chutes chutes get <name>
-chutes report <invocation_id>
-chutes warmup <module>:chute
-```
-
-Run `chutes --help` or check the upstream docs for the full command set.
+| Function | Description |
+|----------|-------------|
+| `build_wrapper_image()` | Create Chutes-compatible image from base Docker image |
+| `load_route_manifest()` | Load routes from `.routes.json`, merge with static routes |
+| `register_passthrough_routes()` | Register routes as passthrough cords on chute |
+| `wait_for_services()` | Block until service ports accept connections |
+| `probe_services()` | Health check, returns list of errors |
 
 ---
 
 ## Troubleshooting
 
-- **`/usr/bin/docker` missing** with `--local`: install Docker Desktop and symlink it.
-- **“You must have a balance of >= $50 to create images.”**: add funds before remote builds/deployments.
-- **Credentials/ENV issues**: ensure `.env` and `~/.chutes/config.ini` match the templates (`env.example`, `config.ini.example`).
-- **Remote imports**: already handled—each deploy script inlines everything required.
+| Issue | Solution |
+|-------|----------|
+| `/usr/bin/docker` missing | Install Docker Desktop; on macOS symlink to `/usr/bin/docker` |
+| "balance >= $50" error | Add funds before remote builds |
+| Container exits immediately | Check `CHUTE_ENV` for required env vars |
+| No routes discovered | Service may not expose OpenAPI; use `CHUTE_STATIC_ROUTES` |
+| `InvalidPath` error | Chutes SDK doesn't support path params `{id}`, file extensions, or root `/` |
 
 ---
+
+## Links
+
+- [Chutes Documentation](https://chutes.ai/docs)
+- [SDK Image Reference](https://chutes.ai/docs/sdk-reference/image)
+- [Registration Token](https://rtok.chutes.ai/users/registration_token)
