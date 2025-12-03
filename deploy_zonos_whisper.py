@@ -32,7 +32,7 @@ ENTRYPOINT = os.getenv("CHUTE_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh"
 
 CHUTE_BASE_IMAGE = os.getenv("CHUTE_BASE_IMAGE", "elbios/zonos-whisper:latest")
 CHUTE_NAME = "zonos-whisper"
-CHUTE_TAG = "tts-stt-v0.1.1"
+CHUTE_TAG = "tts-stt-v0.1.2"
 
 # Chute environment variables (used during discovery and runtime)
 CHUTE_ENV = {
