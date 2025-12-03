@@ -1,0 +1,124 @@
+{
+  "routes": [
+    {
+      "path": "/speakers_list",
+      "method": "GET",
+      "port": 8020,
+      "target_path": "/speakers_list",
+      "stream": false
+    },
+    {
+      "path": "/speakers",
+      "method": "GET",
+      "port": 8020,
+      "target_path": "/speakers",
+      "stream": false
+    },
+    {
+      "path": "/languages",
+      "method": "GET",
+      "port": 8020,
+      "target_path": "/languages",
+      "stream": false
+    },
+    {
+      "path": "/get_folders",
+      "method": "GET",
+      "port": 8020,
+      "target_path": "/get_folders",
+      "stream": false
+    },
+    {
+      "path": "/get_models_list",
+      "method": "GET",
+      "port": 8020,
+      "target_path": "/get_models_list",
+      "stream": false
+    },
+    {
+      "path": "/get_tts_settings",
+      "method": "GET",
+      "port": 8020,
+      "target_path": "/get_tts_settings",
+      "stream": false
+    },
+    {
+      "path": "/sample/{file_name}",
+      "method": "GET",
+      "port": 8020,
+      "target_path": "/sample/{file_name}",
+      "stream": false
+    },
+    {
+      "path": "/set_output",
+      "method": "POST",
+      "port": 8020,
+      "target_path": "/set_output",
+      "stream": false
+    },
+    {
+      "path": "/set_speaker_folder",
+      "method": "POST",
+      "port": 8020,
+      "target_path": "/set_speaker_folder",
+      "stream": false
+    },
+    {
+      "path": "/switch_model",
+      "method": "POST",
+      "port": 8020,
+      "target_path": "/switch_model",
+      "stream": false
+    },
+    {
+      "path": "/set_tts_settings",
+      "method": "POST",
+      "port": 8020,
+      "target_path": "/set_tts_settings",
+      "stream": false
+    },
+    {
+      "path": "/tts_stream",
+      "method": "GET",
+      "port": 8020,
+      "target_path": "/tts_stream",
+      "stream": false
+    },
+    {
+      "path": "/tts_to_audio/",
+      "method": "POST",
+      "port": 8020,
+      "target_path": "/tts_to_audio/",
+      "stream": false
+    },
+    {
+      "path": "/tts_to_file",
+      "method": "POST",
+      "port": 8020,
+      "target_path": "/tts_to_file",
+      "stream": false
+    },
+    {
+      "path": "/create_latents",
+      "method": "POST",
+      "port": 8020,
+      "target_path": "/create_latents",
+      "stream": false
+    },
+    {
+      "path": "/store_latents",
+      "method": "POST",
+      "port": 8020,
+      "target_path": "/store_latents",
+      "stream": false
+    },
+    {
+      "path": "/create_and_store_latents",
+      "method": "POST",
+      "port": 8020,
+      "target_path": "/create_and_store_latents",
+      "stream": false
+    }
+  ],
+  "source": "xtts-whisper"
+}

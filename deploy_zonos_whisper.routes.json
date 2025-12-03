@@ -1,0 +1,48 @@
+{
+  "routes": [
+    {
+      "path": "/api/generate_audio",
+      "method": "POST",
+      "port": 7860,
+      "target_path": "/api/generate_audio",
+      "stream": false
+    },
+    {
+      "path": "/api/predict/",
+      "method": "POST",
+      "port": 7860,
+      "target_path": "/api/predict/",
+      "stream": false
+    },
+    {
+      "path": "/queue/join",
+      "method": "POST",
+      "port": 7860,
+      "target_path": "/queue/join",
+      "stream": false
+    },
+    {
+      "path": "/queue/status",
+      "method": "POST",
+      "port": 7860,
+      "target_path": "/queue/status",
+      "stream": false
+    },
+    {
+      "path": "/file",
+      "method": "GET",
+      "port": 7860,
+      "target_path": "/file",
+      "stream": false
+    },
+    {
+      "path": "/v1/audio/transcriptions",
+      "method": "POST",
+      "port": 8080,
+      "target_path": "/inference",
+      "stream": false
+    }
+  ],
+  "source": "zonos-whisper"
+}
+
