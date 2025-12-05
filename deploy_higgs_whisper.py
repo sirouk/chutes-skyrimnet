@@ -18,10 +18,9 @@ chutes_config = ConfigParser()
 chutes_config.read(os.path.expanduser("~/.chutes/config.ini"))
 USERNAME = os.getenv("CHUTES_USERNAME") or chutes_config.get("auth", "username", fallback="chutes")
 CHUTE_GPU_COUNT = int(os.getenv("CHUTE_GPU_COUNT", "1"))
-CHUTE_MIN_VRAM_GB_PER_GPU = int(os.getenv("CHUTE_MIN_VRAM_GB_PER_GPU", "32"))
-CHUTE_INCLUDE_GPU_TYPES = os.getenv("CHUTE_INCLUDE_GPU_TYPES", "rtx4090,rtx3090,a100").split(",")
+CHUTE_MIN_VRAM_GB_PER_GPU = int(os.getenv("CHUTE_MIN_VRAM_GB_PER_GPU", "16"))  # Chutes minimum; Higgs ~6GB + Whisper ~1.5GB
 CHUTE_SHUTDOWN_AFTER_SECONDS = int(os.getenv("CHUTE_SHUTDOWN_AFTER_SECONDS", "3600"))
-CHUTE_CONCURRENCY = int(os.getenv("CHUTE_CONCURRENCY", "1"))
+CHUTE_CONCURRENCY = int(os.getenv("CHUTE_CONCURRENCY", "3"))  # Medium model
 
 LOCAL_HOST = "127.0.0.1"
 SERVICE_PORTS = [int(p.strip()) for p in os.getenv("CHUTE_PORTS", "7860,8080").split(",") if p.strip()]
@@ -31,8 +30,9 @@ DEFAULT_SERVICE_PORT = SERVICE_PORTS[0]
 ENTRYPOINT = os.getenv("CHUTE_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh")
 
 CHUTE_BASE_IMAGE = os.getenv("CHUTE_BASE_IMAGE", "elbios/higgs-whisper:latest")
+CHUTE_PYTHON_VERSION = os.getenv("CHUTE_PYTHON_VERSION", "3.10")
 CHUTE_NAME = "higgs-whisper"
-CHUTE_TAG = "tts-stt-v0.1.1"
+CHUTE_TAG = "tts-stt-v0.1.4"
 
 # Chute environment variables (used during discovery and runtime)
 CHUTE_ENV = {
@@ -41,14 +41,13 @@ CHUTE_ENV = {
     "HIGGS_AUDIO_TOKENIZER": "bosonai/higgs-audio-v2-tokenizer",
 }
 
-# Static routes (always included, merged with discovered routes)
-# Whisper.cpp server doesn't expose OpenAPI, so define routes manually
-# See: https://github.com/ggml-org/whisper.cpp/tree/master/examples/server
+# Static routes for whisper.cpp (port 8080) - doesn't expose OpenAPI
+# Gradio routes (port 7860) are auto-discovered - see routes.json
+# https://github.com/ggml-org/whisper.cpp/tree/master/examples/server
 CHUTE_STATIC_ROUTES = [
     {"path": "/inference", "method": "POST", "port": 8080, "target_path": "/inference"},
     {"path": "/load", "method": "GET", "port": 8080, "target_path": "/load"},
     {"path": "/load", "method": "POST", "port": 8080, "target_path": "/load"},
-    # OpenAI-compatible alias
     {"path": "/v1/audio/transcriptions", "method": "POST", "port": 8080, "target_path": "/inference"},
 ]
 CHUTE_TAGLINE = "elbios/higgs-whisper (Boson Higgs Audio + Whisper.cpp)"
@@ -78,6 +77,7 @@ image = build_wrapper_image(
     name=CHUTE_NAME,
     tag=CHUTE_TAG,
     base_image=CHUTE_BASE_IMAGE,
+    python_version=CHUTE_PYTHON_VERSION,
 )
 
 chute = Chute(
@@ -86,7 +86,7 @@ chute = Chute(
     tagline=CHUTE_TAGLINE,
     readme=CHUTE_DOC,
     image=image,
-    node_selector=NodeSelector(gpu_count=CHUTE_GPU_COUNT, min_vram_gb_per_gpu=CHUTE_MIN_VRAM_GB_PER_GPU, include=CHUTE_INCLUDE_GPU_TYPES),
+    node_selector=NodeSelector(gpu_count=CHUTE_GPU_COUNT, min_vram_gb_per_gpu=CHUTE_MIN_VRAM_GB_PER_GPU),
     concurrency=CHUTE_CONCURRENCY,
     allow_external_egress=True,
     shutdown_after_seconds=CHUTE_SHUTDOWN_AFTER_SECONDS,
