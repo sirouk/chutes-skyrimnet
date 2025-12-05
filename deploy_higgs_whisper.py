@@ -8,10 +8,9 @@ from chutes.chute import Chute, NodeSelector
 from tools.chute_wrappers import (
     build_wrapper_image,
     load_route_manifest,
-    parse_service_ports,
     register_passthrough_routes,
     register_health_check,
-    wait_for_services,
+    register_startup_wait,
 )
 
 chutes_config = ConfigParser()
@@ -93,22 +92,7 @@ chute = Chute(
 )
 
 register_passthrough_routes(chute, load_route_manifest(static_routes=CHUTE_STATIC_ROUTES), DEFAULT_SERVICE_PORT)
-
-
-@chute.on_startup()
-async def boot(self):
-    """
-    Check if Higgs and Whisper services are ready.
-    """
-    await wait_for_services(SERVICE_PORTS, host=LOCAL_HOST, timeout=600)
-
-
-# @chute.on_shutdown()
-# async def shutdown(self):
-#     """Gracefully terminate the entrypoint process."""
-#     logger.info("✅ Services stopped.")
-
-
+register_startup_wait(chute, SERVICE_PORTS, LOCAL_HOST)
 register_health_check(chute, SERVICE_PORTS, LOCAL_HOST)
 
 
