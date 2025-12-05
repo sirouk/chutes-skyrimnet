@@ -235,6 +235,15 @@ def register_health_check(chute, ports: list[int], host: str = LOCAL_HOST) -> No
         return {"status": "healthy", "ports": ports}
 
 
+def register_startup_wait(chute, ports: list[int], host: str = LOCAL_HOST, timeout: int = 600) -> None:
+    """Register on_startup handler that waits for service ports to be ready."""
+
+    @chute.on_startup()
+    async def boot(self):
+        """Wait for all services to be ready."""
+        await wait_for_services(ports, host=host, timeout=timeout)
+
+
 def _parse_routes_json(raw: str) -> list[dict]:
     try:
         data = json.loads(raw)
