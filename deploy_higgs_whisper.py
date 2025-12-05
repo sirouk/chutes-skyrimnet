@@ -29,15 +29,21 @@ DEFAULT_SERVICE_PORT = SERVICE_PORTS[0]
 ENTRYPOINT = os.getenv("CHUTE_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh")
 
 CHUTE_BASE_IMAGE = os.getenv("CHUTE_BASE_IMAGE", "elbios/higgs-whisper:latest")
-CHUTE_PYTHON_VERSION = os.getenv("CHUTE_PYTHON_VERSION", "3.10")
+CHUTE_PYTHON_VERSION = os.getenv("CHUTE_PYTHON_VERSION", "3.11")
 CHUTE_NAME = "higgs-whisper"
-CHUTE_TAG = "tts-stt-v0.1.4"
+CHUTE_TAG = "tts-stt-v0.1.9"
 
 # Chute environment variables (used during discovery and runtime)
 CHUTE_ENV = {
     "WHISPER_MODEL": "large-v3-turbo",
     "HIGGS_MODEL_ID": "bosonai/higgs-audio-v2-generation-3B-base",
     "HIGGS_AUDIO_TOKENIZER": "bosonai/higgs-audio-v2-tokenizer",
+    # Cache directories (/cache owned by chutes user)
+    "HF_HOME": "/cache/huggingface",
+    "TORCH_HOME": "/cache/torch",
+    "WHISPER_MODELS_DIR": "/cache/whispercpp",
+    # Disable base image's Vast.ai watchdog (Chutes has its own shutdown_after_seconds)
+    "MAX_IDLE_SECONDS": "31536000",
 }
 
 # Static routes for whisper.cpp (port 8080) - doesn't expose OpenAPI
@@ -77,6 +83,7 @@ image = build_wrapper_image(
     tag=CHUTE_TAG,
     base_image=CHUTE_BASE_IMAGE,
     python_version=CHUTE_PYTHON_VERSION,
+    env=CHUTE_ENV,
 )
 
 chute = Chute(
