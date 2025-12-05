@@ -94,22 +94,22 @@ Each `deploy_*.py` follows this pattern:
 from chutes.chute import Chute, NodeSelector
 from tools.chute_wrappers import (
     build_wrapper_image, load_route_manifest,
-    register_passthrough_routes, wait_for_services, probe_services,
+    register_passthrough_routes, register_startup_wait, register_health_check,
 )
 
 # Configuration
 CHUTE_NAME = "xtts-whisper"
-CHUTE_TAG = "tts-stt-v0.1.5"
+CHUTE_TAG = "tts-stt-v0.1.6"
 CHUTE_BASE_IMAGE = "elbios/xtts-whisper:latest"
-CHUTE_PYTHON_VERSION = "3.10"  # System Python for chutes compatibility
-CHUTE_MIN_VRAM_GB_PER_GPU = 8
-CHUTE_CONCURRENCY = 6
+CHUTE_PYTHON_VERSION = "3.11"
 SERVICE_PORTS = [8020, 8080]
+LOCAL_HOST = "127.0.0.1"
 
-# Static routes (for services without OpenAPI)
+# Static routes for services without OpenAPI (e.g. whisper.cpp)
 CHUTE_STATIC_ROUTES = [
-    {"path": "/inference", "method": "POST", "port": 8080, "target_path": "/inference"},
-    {"path": "/v1/audio/transcriptions", "method": "POST", "port": 8080, "target_path": "/inference"},
+    {"port": 8080, "method": "GET", "path": "/load", "target_path": "/load"},
+    {"port": 8080, "method": "POST", "path": "/inference", "target_path": "/inference"},
+    {"port": 8080, "method": "POST", "path": "/v1/audio/transcriptions", "target_path": "/inference"},
 ]
 
 # Build image with system Python (required for chutes-inspecto.so)
@@ -120,21 +120,14 @@ chute = Chute(
     username=USERNAME,
     name=CHUTE_NAME,
     image=image,
-    node_selector=NodeSelector(gpu_count=1, min_vram_gb_per_gpu=CHUTE_MIN_VRAM_GB_PER_GPU),
-    concurrency=CHUTE_CONCURRENCY,
+    node_selector=NodeSelector(gpu_count=1, min_vram_gb_per_gpu=16),
+    concurrency=6,
 )
 
-# Register routes
+# Register routes, startup wait, and health check
 register_passthrough_routes(chute, load_route_manifest(static_routes=CHUTE_STATIC_ROUTES), SERVICE_PORTS[0])
-
-@chute.on_startup()
-async def boot(self):
-    await wait_for_services(SERVICE_PORTS, timeout=600)
-
-@chute.cord(public_api_path="/health", public_api_method="GET", method="GET")
-async def health_check(self) -> dict:
-    errors = await probe_services(SERVICE_PORTS, timeout=5)
-    return {"status": "unhealthy", "errors": errors} if errors else {"status": "healthy"}
+register_startup_wait(chute, SERVICE_PORTS, LOCAL_HOST)
+register_health_check(chute, SERVICE_PORTS, LOCAL_HOST)
 ```
 
 ---
@@ -165,12 +158,12 @@ async def health_check(self) -> dict:
 | Function | Description |
 |----------|-------------|
 | `build_wrapper_image(username, name, tag, base_image, python_version="3.10")` | Create Chutes-compatible image with system Python |
-| `load_route_manifest()` | Load routes from `.routes.json`, merge with static routes |
-| `register_passthrough_routes()` | Register routes as passthrough cords on chute |
-| `wait_for_services()` | Block until service ports accept connections |
-| `probe_services()` | Health check, returns list of errors |
+| `load_route_manifest(static_routes=[])` | Load routes from `.routes.json`, merge/dedupe with static routes |
+| `register_passthrough_routes(chute, routes, default_port)` | Register routes as passthrough cords on chute |
+| `register_startup_wait(chute, ports, host, timeout=600)` | Register `on_startup` handler to wait for services |
+| `register_health_check(chute, ports, host)` | Register `/health` endpoint that probes service ports |
 
-**Note:** The `python_version` parameter installs system Python (via apt) instead of using Conda Python. This is required because `chutes-inspecto.so` segfaults under Conda Python environments.
+**Note:** System Python is required because `chutes-inspecto.so` segfaults under Conda Python.
 
 ---
 
