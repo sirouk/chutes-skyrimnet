@@ -374,6 +374,17 @@ do_build() {
     fi
     
     print_success "Build complete"
+    
+    # For local builds, test chutes-inspecto.so compatibility
+    if $LOCAL_BUILD; then
+        local image=$(get_image_name "$module")
+        if [[ -n "$image" ]] && docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^${image}$"; then
+            echo ""
+            if ! test_inspecto_hash "$image"; then
+                print_error "Image may fail remote build due to Python/inspecto incompatibility"
+            fi
+        fi
+    fi
 }
 
 show_running_chute_containers() {
@@ -547,6 +558,34 @@ if name_match and tag_match:
 " 2>/dev/null)
     
     echo "$result"
+}
+
+test_inspecto_hash() {
+    local image="$1"
+    
+    print_info "Testing chutes-inspecto.so compatibility..."
+    print_cmd "docker run --rm --entrypoint \"\" $image bash -c 'pip install chutes --upgrade >/dev/null 2>&1 && chutes run does_not_exist:chute --generate-inspecto-hash; echo EXIT:\$?'"
+    echo ""
+    
+    local output
+    output=$(docker run --rm --entrypoint "" "$image" bash -c 'pip install chutes --upgrade >/dev/null 2>&1 && chutes run does_not_exist:chute --generate-inspecto-hash; echo EXIT:$?' 2>&1)
+    local exit_line
+    exit_line=$(echo "$output" | grep -oE 'EXIT:[0-9]+' | tail -1)
+    local exit_code="${exit_line#EXIT:}"
+    
+    echo "$output"
+    echo ""
+    
+    if [[ "$exit_code" == "0" ]]; then
+        print_success "chutes-inspecto.so test passed (exit 0)"
+        return 0
+    elif [[ "$exit_code" == "139" ]]; then
+        print_error "chutes-inspecto.so SEGFAULT (exit 139) - Conda Python issue"
+        return 1
+    else
+        print_warning "chutes-inspecto.so test exited with code $exit_code"
+        return 1
+    fi
 }
 
 wait_for_chute_ready() {
