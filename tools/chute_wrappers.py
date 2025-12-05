@@ -223,6 +223,18 @@ async def probe_services(ports: Iterable[int], host: str = LOCAL_HOST, timeout: 
     return errors
 
 
+def register_health_check(chute, ports: list[int], host: str = LOCAL_HOST) -> None:
+    """Register a /health endpoint that probes all service ports."""
+
+    @chute.cord(public_api_path="/health", public_api_method="GET", method="GET")
+    async def health_check(self) -> dict:
+        """Check if all services are healthy."""
+        errors = await probe_services(ports, host=host, timeout=5)
+        if errors:
+            return {"status": "unhealthy", "errors": errors}
+        return {"status": "healthy", "ports": ports}
+
+
 def _parse_routes_json(raw: str) -> list[dict]:
     try:
         data = json.loads(raw)
