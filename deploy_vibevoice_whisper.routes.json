@@ -20,15 +20,7 @@
       "port": 7860,
       "target_path": "/queue/status",
       "stream": false
-    },
-    {
-      "path": "/v1/audio/transcriptions",
-      "method": "POST",
-      "port": 8080,
-      "target_path": "/inference",
-      "stream": false
     }
   ],
   "source": "vibevoice-whisper"
 }
-
