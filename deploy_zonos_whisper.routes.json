@@ -34,15 +34,7 @@
       "port": 7860,
       "target_path": "/file",
       "stream": false
-    },
-    {
-      "path": "/v1/audio/transcriptions",
-      "method": "POST",
-      "port": 8080,
-      "target_path": "/inference",
-      "stream": false
     }
   ],
   "source": "zonos-whisper"
 }
-
