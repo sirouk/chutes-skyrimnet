@@ -19,14 +19,14 @@ source .venv/bin/activate
 
 ## Chutes Overview
 
-| Module | Base Image | Ports | GPU |
-|--------|-----------|-------|-----|
-| `deploy_xtts_whisper.py` | `elbios/xtts-whisper:latest` | 8020 (XTTS) + 8080 (Whisper) | ≥16 GB |
-| `deploy_vibevoice_whisper.py` | `elbios/vibevoice-whisper:latest` | 7860 (Gradio) + 8080 (Whisper) | ≥24 GB |
-| `deploy_higgs_whisper.py` | `elbios/higgs-whisper:latest` | 7860 (Gradio) + 8080 (Whisper) | ≥32 GB |
-| `deploy_zonos_whisper.py` | `elbios/zonos-whisper:latest` | 7860 (Gradio) + 8080 (Whisper) | ≥24 GB |
+| Module | TTS Model | Model Size | Ports | Min VRAM | Concurrency |
+|--------|-----------|------------|-------|----------|-------------|
+| `deploy_xtts_whisper.py` | XTTS v2 | ~1.5GB | 8020 + 8080 | 16GB | 6 |
+| `deploy_vibevoice_whisper.py` | VibeVoice 1.5B | ~3GB | 7860 + 8080 | 16GB | 5 |
+| `deploy_higgs_whisper.py` | Higgs Audio 3B | ~6GB | 7860 + 8080 | 16GB | 3 |
+| `deploy_zonos_whisper.py` | Zonos 8.8B | ~18GB | 7860 + 8080 | 24GB | 2 |
 
-Each chute wraps the upstream Docker image and exposes its HTTP API via passthrough cords.
+All chutes include Whisper large-v3-turbo (~1.5GB) for STT. Each wraps the upstream `elbios/*` Docker image and exposes HTTP API via passthrough cords. Chutes auto-matches available GPUs based on VRAM.
 
 ---
 
@@ -97,33 +97,31 @@ from tools.chute_wrappers import (
     register_passthrough_routes, wait_for_services, probe_services,
 )
 
-# Identification
+# Configuration
 CHUTE_NAME = "xtts-whisper"
-CHUTE_TAG = "tts-stt-v0.1.1"
+CHUTE_TAG = "tts-stt-v0.1.5"
 CHUTE_BASE_IMAGE = "elbios/xtts-whisper:latest"
+CHUTE_PYTHON_VERSION = "3.10"  # System Python for chutes compatibility
+CHUTE_MIN_VRAM_GB_PER_GPU = 8
+CHUTE_CONCURRENCY = 6
 SERVICE_PORTS = [8020, 8080]
 
-# Environment variables (used during discovery and runtime)
-CHUTE_ENV = {
-    "WHISPER_MODEL": "large-v3-turbo",
-    "XTTS_MODEL_ID": "tts_models/multilingual/multi-dataset/xtts_v2",
-}
-
-# Static routes (for services without OpenAPI, merged with discovered routes)
+# Static routes (for services without OpenAPI)
 CHUTE_STATIC_ROUTES = [
     {"path": "/inference", "method": "POST", "port": 8080, "target_path": "/inference"},
     {"path": "/v1/audio/transcriptions", "method": "POST", "port": 8080, "target_path": "/inference"},
 ]
 
-# Build image
-image = build_wrapper_image(USERNAME, CHUTE_NAME, CHUTE_TAG, CHUTE_BASE_IMAGE)
+# Build image with system Python (required for chutes-inspecto.so)
+image = build_wrapper_image(USERNAME, CHUTE_NAME, CHUTE_TAG, CHUTE_BASE_IMAGE, CHUTE_PYTHON_VERSION)
 
 # Create chute
 chute = Chute(
     username=USERNAME,
     name=CHUTE_NAME,
     image=image,
-    node_selector=NodeSelector(gpu_count=1, min_vram_gb_per_gpu=16),
+    node_selector=NodeSelector(gpu_count=1, min_vram_gb_per_gpu=CHUTE_MIN_VRAM_GB_PER_GPU),
+    concurrency=CHUTE_CONCURRENCY,
 )
 
 # Register routes
@@ -166,11 +164,13 @@ async def health_check(self) -> dict:
 
 | Function | Description |
 |----------|-------------|
-| `build_wrapper_image()` | Create Chutes-compatible image from base Docker image |
+| `build_wrapper_image(username, name, tag, base_image, python_version="3.10")` | Create Chutes-compatible image with system Python |
 | `load_route_manifest()` | Load routes from `.routes.json`, merge with static routes |
 | `register_passthrough_routes()` | Register routes as passthrough cords on chute |
 | `wait_for_services()` | Block until service ports accept connections |
 | `probe_services()` | Health check, returns list of errors |
+
+**Note:** The `python_version` parameter installs system Python (via apt) instead of using Conda Python. This is required because `chutes-inspecto.so` segfaults under Conda Python environments.
 
 ---
 
@@ -183,6 +183,8 @@ async def health_check(self) -> dict:
 | Container exits immediately | Check `CHUTE_ENV` for required env vars |
 | No routes discovered | Service may not expose OpenAPI; use `CHUTE_STATIC_ROUTES` |
 | `InvalidPath` error | Chutes SDK doesn't support path params `{id}`, file extensions, or root `/` |
+| "Build of filesystem verification image failed" | Base image uses Conda Python; `build_wrapper_image` installs system Python to fix |
+| SIGSEGV / exit code 139 during build | `chutes-inspecto.so` crashes under Conda Python; ensure system Python is used |
 
 ---
 
