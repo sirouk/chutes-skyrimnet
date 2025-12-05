@@ -45,9 +45,9 @@ CHUTE_ENV = {
 # Gradio routes (port 7860) are auto-discovered - see routes.json
 # https://github.com/ggml-org/whisper.cpp/tree/master/examples/server
 CHUTE_STATIC_ROUTES = [
-    {"path": "/inference", "method": "POST", "port": 8080, "target_path": "/inference"},
-    {"path": "/load", "method": "GET", "port": 8080, "target_path": "/load"},
-    {"path": "/load", "method": "POST", "port": 8080, "target_path": "/load"},
+    {"port": 8080, "method": "GET", "path": "/load", "target_path": "/load"},
+    {"port": 8080, "method": "POST", "path": "/inference", "target_path": "/inference"},
+    {"port": 8080, "method": "POST", "path": "/load", "target_path": "/load"},
 ]
 CHUTE_TAGLINE = "elbios/vibevoice-whisper (VibeVoice-1.5B + Whisper.cpp)"
 CHUTE_README = "Wrapper image that ships the latest elbios/vibevoice-whisper for deployment on Chutes."

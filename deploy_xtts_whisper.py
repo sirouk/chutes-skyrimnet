@@ -44,10 +44,10 @@ CHUTE_ENV = {
 # XTTS routes (port 8020) are auto-discovered - see routes.json
 # https://github.com/ggml-org/whisper.cpp/tree/master/examples/server
 CHUTE_STATIC_ROUTES = [
-    {"path": "/inference", "method": "POST", "port": 8080, "target_path": "/inference"},
-    {"path": "/load", "method": "GET", "port": 8080, "target_path": "/load"},
-    {"path": "/load", "method": "POST", "port": 8080, "target_path": "/load"},
-    {"path": "/v1/audio/transcriptions", "method": "POST", "port": 8080, "target_path": "/inference"},
+    {"port": 8080, "method": "GET", "path": "/load", "target_path": "/load"},
+    {"port": 8080, "method": "POST", "path": "/inference", "target_path": "/inference"},
+    {"port": 8080, "method": "POST", "path": "/load", "target_path": "/load"},
+    {"port": 8080, "method": "POST", "path": "/v1/audio/transcriptions", "target_path": "/inference"},
 ]
 CHUTE_TAGLINE = "elbios/xtts-whisper (XTTS + Whisper.cpp)"
 CHUTE_README = "Wrapper image that ships the latest elbios/xtts-whisper for deployment on Chutes."
