@@ -42,7 +42,17 @@ def parse_service_ports(env_value: str | None = None, default_ports: str = "8020
     return ports
 
 
-def build_wrapper_image(username: str, name: str, tag: str, base_image: str) -> Image:
+def build_wrapper_image(username: str, name: str, tag: str, base_image: str, python_version: str = "3.10") -> Image:
+    """
+    Build a wrapper image with system Python (not Conda) for chutes compatibility.
+    The chutes-inspecto.so binary segfaults under Conda Python; a normal apt-installed
+    Python works fine.
+
+    Args:
+        python_version: System Python version to install (e.g. "3.10", "3.11", "3.12").
+                        Default is "3.10" which is known to work with chutes-inspecto.so.
+    """
+    py_ver = python_version  # e.g. "3.10"
     return (
         Image(
             username=username,
@@ -50,9 +60,15 @@ def build_wrapper_image(username: str, name: str, tag: str, base_image: str) -> 
             tag=tag,
         )
         .from_base(base_image)
-        # .with_python(PYTHON_VERSION) # Uncomment this to use a specific Python version, otherwise use image's default
         .with_env("DEBIAN_FRONTEND", "noninteractive")
         .with_env("NEEDRESTART_SUSPEND", "y")
+        # Install system Python (works with chutes-inspecto.so, unlike Conda Python)
+        .run_command(
+            f"apt update && apt -y install python{py_ver} python{py_ver}-venv python{py_ver}-dev python3-pip && "
+            "rm -f /usr/lib/python3*/EXTERNALLY-MANAGED && "
+            f"ln -sf /usr/bin/python{py_ver} /usr/local/bin/python && "
+            f"ln -sf /usr/bin/python{py_ver} /usr/local/bin/python3"
+        )
         .run_command("apt update && apt -y upgrade && apt autoclean -y && apt -y autoremove")
         .run_command(f"apt update && apt -y install {APT_PACKAGES}")
         .run_command("mkdir -p /etc/OpenCL/vendors/ && echo 'libnvidia-opencl.so.1' > /etc/OpenCL/vendors/nvidia.icd")
@@ -62,38 +78,14 @@ def build_wrapper_image(username: str, name: str, tag: str, base_image: str) -> 
             "mkdir -p /home/chutes /app /opt/whispercpp/models && "
             "chown -R chutes:chutes /home/chutes /app /opt/whispercpp /var/log && "
             "usermod -aG root chutes && "
-            "chmod g+wrx /opt/conda/bin /opt/conda/lib/python*/site-packages /usr/local/bin /usr/local/lib /usr/local/share /usr/local/share/man 2>/dev/null || true"
+            "chmod g+wrx /usr/local/bin /usr/local/lib /usr/local/share /usr/local/share/man 2>/dev/null || true"
         )
-        .run_command("python -m pip install uv cmake ninja")
+        .run_command("/usr/local/bin/python -m pip install --upgrade pip")
         .run_command("mkdir -p /root/.cache && chown -R chutes:chutes /root")
         .set_user("chutes")
-        .run_command(
-            "mkdir -p /home/chutes/.local/bin && "
-            "printf '#!/bin/bash\\nexec uv pip --user \"$@\"\\n' > /home/chutes/.local/bin/pip && "
-            "chmod 755 /home/chutes/.local/bin/pip"
-        )
-        .with_env("PATH", "/opt/conda/bin:/home/chutes/.local/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
-        .with_env("UV_SYSTEM_PYTHON", "1")
-        .with_env("UV_CACHE_DIR", "/home/chutes/.cache/uv")
+        .with_env("PATH", "/home/chutes/.local/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
         .set_user("root")
         .run_command("rm -rf /home/chutes/.cache")
-        .run_command(
-            "PY_BIN=$(command -v python || command -v python3) && "
-            "if [ -n \"$PY_BIN\" ]; then ln -sf \"$PY_BIN\" /usr/local/bin/python; fi"
-        )
-        .run_command(
-            "python -c \""
-            "import os,pathlib,site;"
-            "hints=[pathlib.Path(p) for p in os.getenv('CHUTES_PYTHONPATH_HINTS','/app:/workspace:/srv').split(':') if p];"
-            "hints.append(pathlib.Path.cwd());"
-            "paths,seen=[],set();"
-            "add=lambda p:(p.is_dir() and str(p.resolve()) not in seen and (seen.add(str(p.resolve())) or paths.append(str(p.resolve()))));"
-            "looks_like_pkg=lambda p:p.is_dir() and (any((p/m).exists() for m in ['__init__.py','setup.py','pyproject.toml','setup.cfg']) or any(p.glob('*.py')));"
-            "[add(b) or [add(c) for c in (list(b.iterdir()) if b.exists() else []) if looks_like_pkg(c)] for b in hints if b.exists()];"
-            "pth=pathlib.Path(site.getsitepackages()[0])/'chutes_app_path.pth';"
-            "(paths and pth.write_text(chr(10).join(paths)+chr(10)))"
-            "\""
-        )
         .set_user("chutes")
         .with_env("HOME", "/home/chutes")
         .with_env("PIP_USER", "1")
@@ -142,12 +134,29 @@ def load_route_manifest(
 
     # Merge static routes (avoid duplicates by path+method)
     if static_routes:
-        existing = {(r["path"], r.get("method", "GET").upper()) for r in routes}
+        existing = {(r["path"], r.get("method", "GET").upper()): r for r in routes}
+        duplicates = []
         for route in static_routes:
             key = (route["path"], route.get("method", "GET").upper())
-            if key not in existing:
+            if key in existing:
+                # Check if definitions differ
+                existing_route = existing[key]
+                if (route.get("port") != existing_route.get("port") or
+                        route.get("target_path") != existing_route.get("target_path")):
+                    logger.warning(
+                        f"Static route {key[1]} {key[0]} differs from discovered: "
+                        f"static={route}, discovered={existing_route}"
+                    )
+                else:
+                    duplicates.append(f"{key[1]} {key[0]}")
+            else:
                 routes.append(route)
-                existing.add(key)
+                existing[key] = route
+        if duplicates:
+            logger.info(
+                f"Skipped {len(duplicates)} duplicate static route(s) already in manifest: "
+                f"{', '.join(duplicates[:3])}{'...' if len(duplicates) > 3 else ''}"
+            )
 
     return routes
 
