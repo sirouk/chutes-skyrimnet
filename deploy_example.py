@@ -56,6 +56,9 @@ Describe your service here. This appears in the Chutes.ai UI.
 CHUTE_ENV = {
     # "MODEL_NAME": "your-model",
     # "WHISPER_MODEL": "large-v3-turbo",
+    # Cache directories (/cache owned by chutes user)
+    "HF_HOME": "/cache/huggingface",
+    "TORCH_HOME": "/cache/torch",
 }
 
 # Static routes for services without OpenAPI (merged with discovered routes, deduped)
@@ -72,7 +75,7 @@ CHUTE_GPU_COUNT = int(os.getenv("CHUTE_GPU_COUNT", "1"))
 CHUTE_MIN_VRAM_GB_PER_GPU = int(os.getenv("CHUTE_MIN_VRAM_GB_PER_GPU", "16"))  # Chutes minimum is 16GB
 CHUTE_SHUTDOWN_AFTER_SECONDS = int(os.getenv("CHUTE_SHUTDOWN_AFTER_SECONDS", "3600"))
 CHUTE_CONCURRENCY = int(os.getenv("CHUTE_CONCURRENCY", "1"))
-CHUTE_PYTHON_VERSION = os.getenv("CHUTE_PYTHON_VERSION", "3.10")  # System Python for chutes-inspecto.so
+CHUTE_PYTHON_VERSION = os.getenv("CHUTE_PYTHON_VERSION", "3.11")  # System Python for chutes-inspecto.so
 
 # =============================================================================
 # Network Configuration
@@ -99,6 +102,7 @@ image = build_wrapper_image(
     tag=CHUTE_TAG,
     base_image=CHUTE_BASE_IMAGE,
     python_version=CHUTE_PYTHON_VERSION,
+    env=CHUTE_ENV,
 )
 
 # =============================================================================
