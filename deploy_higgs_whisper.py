@@ -10,8 +10,8 @@ from tools.chute_wrappers import (
     load_route_manifest,
     parse_service_ports,
     register_passthrough_routes,
+    register_health_check,
     wait_for_services,
-    probe_services,
 )
 
 chutes_config = ConfigParser()
@@ -109,17 +109,7 @@ async def boot(self):
 #     logger.info("✅ Services stopped.")
 
 
-# =============================================================================
-# Health Check
-# =============================================================================
-
-@chute.cord(public_api_path="/health", public_api_method="GET", method="GET")
-async def health_check(self) -> dict:
-    """Check if both services are healthy."""
-    errors = await probe_services(SERVICE_PORTS, host=LOCAL_HOST, timeout=5)
-    if errors:
-        return {"status": "unhealthy", "errors": errors}
-    return {"status": "healthy", "ports": SERVICE_PORTS}
+register_health_check(chute, SERVICE_PORTS, LOCAL_HOST)
 
 
 # =============================================================================
