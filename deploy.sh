@@ -31,6 +31,7 @@ STATUS_CHUTE=""
 RUN_MODULE=""
 RUN_DOCKER_MODULE=""
 DELETE_CHUTE=""
+LOGS_CHUTE=""
 DISCOVER_MODULE=""
 LOCAL_BUILD=false
 ACCEPT_FEE=false
@@ -135,6 +136,7 @@ ${YELLOW}Options:${NC}
   
   ${BLUE}Management:${NC}
   --delete NAME           Delete a chute (interactive confirmation)
+  --logs NAME             Check instance logs for a chute
   --debug                 Enable debug output
 
 ${YELLOW}Available Modules:${NC}
@@ -920,6 +922,29 @@ do_delete() {
     print_success "Chute deleted"
 }
 
+do_check_logs() {
+    local chute_name="$1"
+    
+    print_header "Instance Logs: $chute_name"
+    
+    ensure_venv
+    
+    # Try to find matching deploy module for warmup
+    local warmup_arg=""
+    for f in "$SCRIPT_DIR"/deploy_*.py; do
+        if [[ -f "$f" ]]; then
+            local module=$(basename "$f" .py)
+            # Check if this module's CHUTE_NAME matches
+            if grep -q "CHUTE_NAME.*=.*['\"]${chute_name}['\"]" "$f" 2>/dev/null; then
+                warmup_arg="--warmup ${module}:chute"
+                break
+            fi
+        fi
+    done
+    
+    python3 "$SCRIPT_DIR/tools/instance_logs.py" "$chute_name" $warmup_arg
+}
+
 show_account_info() {
     print_header "Account Info"
     
@@ -956,7 +981,8 @@ show_menu() {
     echo -e "  ${GREEN}6)${NC} Deploy chute"
     echo -e "  ${GREEN}7)${NC} Chute status"
     echo -e "  ${GREEN}8)${NC} Delete chute"
-    echo -e "  ${GREEN}9)${NC} Account info"
+    echo -e "  ${GREEN}9)${NC} Instance logs"
+    echo -e "  ${GREEN}0)${NC} Account info"
     echo -e "  ${GREEN}q)${NC} Quit"
     echo ""
 }
@@ -1015,6 +1041,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --delete)
             DELETE_CHUTE="$2"
+            shift 2
+            ;;
+        --logs)
+            LOGS_CHUTE="$2"
             shift 2
             ;;
         --local)
@@ -1109,6 +1139,11 @@ main() {
         exit 0
     fi
     
+    if [[ -n "$LOGS_CHUTE" ]]; then
+        do_check_logs "$LOGS_CHUTE"
+        exit 0
+    fi
+    
     # Interactive mode
     while true; do
         show_menu
@@ -1181,6 +1216,15 @@ main() {
                 fi
                 ;;
             9)
+                module=$(select_module "Select module for logs") || continue
+                # Extract CHUTE_NAME from the module file
+                chute_name=$(grep -oP "CHUTE_NAME\s*=\s*['\"]\\K[^'\"]*" "$SCRIPT_DIR/${module}.py" 2>/dev/null)
+                if [[ -z "$chute_name" ]]; then
+                    chute_name="${module#deploy_}"  # fallback: strip deploy_ prefix
+                fi
+                do_check_logs "$chute_name"
+                ;;
+            0)
                 show_account_info
                 ;;
             q|Q)
