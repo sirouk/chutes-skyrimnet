@@ -397,6 +397,75 @@ def register_startup_wait(chute, ports: list[int], host: str = LOCAL_HOST, timeo
         await wait_for_services(ports, host=host, timeout=timeout)
 
 
+def register_service_launcher(
+    chute,
+    entrypoint: str | list[str],
+    ports: list[int],
+    host: str = LOCAL_HOST,
+    timeout: int = 600,
+    env: dict[str, str] | None = None,
+) -> None:
+    """
+    Register on_startup handler that launches a service and waits for ports.
+    
+    This is for wrapper images where the base image's services need to be started
+    manually because Chutes overrides the container entrypoint with `chutes run`.
+    
+    Args:
+        chute: The Chute instance
+        entrypoint: Command to run (string or list of args)
+        ports: List of ports to wait for after starting
+        host: Host to check ports on (default 127.0.0.1)
+        timeout: Max seconds to wait for ports (default 600)
+        env: Optional environment variables to add
+    """
+    import subprocess
+    import asyncio
+    import os as _os
+
+    @chute.on_startup()
+    async def launch_services(self):
+        """Launch wrapped services and wait for them to be ready."""
+        # Build command
+        if isinstance(entrypoint, str):
+            cmd = entrypoint.split()
+        else:
+            cmd = list(entrypoint)
+        
+        # Build environment
+        proc_env = _os.environ.copy()
+        if env:
+            proc_env.update(env)
+        
+        logger.info(f"Launching wrapped service: {' '.join(cmd)}")
+        
+        # Start the service in the background
+        proc = subprocess.Popen(
+            cmd,
+            env=proc_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        
+        # Log output in background task
+        async def log_output():
+            import asyncio
+            loop = asyncio.get_running_loop()
+            while proc.poll() is None:
+                line = await loop.run_in_executor(None, proc.stdout.readline)
+                if line:
+                    logger.info(f"[service] {line.rstrip()}")
+                await asyncio.sleep(0.01)
+        
+        asyncio.create_task(log_output())
+        
+        # Wait for all ports to be ready
+        logger.info(f"Waiting for service ports: {ports}")
+        await wait_for_services(ports, host=host, timeout=timeout)
+        logger.success(f"All service ports ready: {ports}")
+
+
 def _parse_routes_json(raw: str) -> list[dict]:
     try:
         data = json.loads(raw)
