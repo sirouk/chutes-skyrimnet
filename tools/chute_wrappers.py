@@ -205,11 +205,19 @@ def build_wrapper_image(
             "mkdir -p /home/chutes /app /cache && "
             "chown -R chutes:chutes /home/chutes /app /cache /var/log && "
             "(command -v usermod >/dev/null && usermod -aG root chutes || (command -v adduser >/dev/null && adduser chutes root 2>/dev/null || true)) && "
-            # Make key directories writable (no -R, just top-level dirs for speed)
-            "chmod g+wrx /opt/conda/bin /opt/conda/lib/python*/site-packages "
-            "/usr/local/bin /usr/local/lib /usr/local/share 2>/dev/null || true && "
-            # Ensure system Python dist-packages exists and is writable for pip/uv
-            "for d in /usr/local/lib/python*/dist-packages /usr/lib/python*/dist-packages; do "
+            # Make install directories writable for chutes user (pip/uv package installs)
+            # Strategy: chmod parent dirs so subdirs can be created, then create common leaf dirs
+            # /opt and /opt/* allows creating/writing in app dirs (non-recursive, fast)
+            "chmod a+rwx /opt /opt/* 2>/dev/null || true && "
+            # Parent dirs (must be writable to create children)
+            "for d in /usr/local/bin /usr/local/lib /usr/local/share /usr/local/include "
+            "/usr/local/share/man /usr/local/share/doc "
+            "/opt/conda/bin /opt/conda/lib; do "
+            "mkdir -p \"$d\" 2>/dev/null && chmod a+rwx \"$d\" 2>/dev/null; done && "
+            # Python package dirs: site-packages (most distros) + dist-packages (Debian/Ubuntu)
+            "for d in /usr/local/lib/python*/site-packages /usr/local/lib/python*/dist-packages "
+            "/usr/lib/python*/site-packages /usr/lib/python*/dist-packages "
+            "/opt/conda/lib/python*/site-packages; do "
             "mkdir -p \"$d\" 2>/dev/null && chmod a+rwx \"$d\" 2>/dev/null; done || true"
         )
         .run_command(
