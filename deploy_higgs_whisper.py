@@ -9,6 +9,7 @@ from tools.chute_wrappers import (
     build_wrapper_image,
     load_route_manifest,
     register_passthrough_routes,
+    register_service_launcher,
 )
 
 chutes_config = ConfigParser()
@@ -103,6 +104,9 @@ chute = Chute(
 )
 
 register_passthrough_routes(chute, load_route_manifest(static_routes=CHUTE_STATIC_ROUTES), DEFAULT_SERVICE_PORT)
+
+# Start the wrapped services (Higgs + Whisper) - base image entrypoint is overridden by chutes run
+register_service_launcher(chute, ENTRYPOINT, SERVICE_PORTS)
 
 
 # =============================================================================
