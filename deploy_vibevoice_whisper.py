@@ -9,8 +9,6 @@ from tools.chute_wrappers import (
     build_wrapper_image,
     load_route_manifest,
     register_passthrough_routes,
-    register_health_check,
-    register_startup_wait,
 )
 
 chutes_config = ConfigParser()
@@ -21,7 +19,6 @@ CHUTE_MIN_VRAM_GB_PER_GPU = int(os.getenv("CHUTE_MIN_VRAM_GB_PER_GPU", "16"))  #
 CHUTE_SHUTDOWN_AFTER_SECONDS = int(os.getenv("CHUTE_SHUTDOWN_AFTER_SECONDS", "3600"))
 CHUTE_CONCURRENCY = int(os.getenv("CHUTE_CONCURRENCY", "5"))  # Small model
 
-LOCAL_HOST = "127.0.0.1"
 SERVICE_PORTS = [int(p.strip()) for p in os.getenv("CHUTE_PORTS", "7860,8080").split(",") if p.strip()]
 if not SERVICE_PORTS:
     raise RuntimeError("CHUTE_PORTS must specify at least one port")
@@ -31,7 +28,7 @@ ENTRYPOINT = os.getenv("CHUTE_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh"
 CHUTE_BASE_IMAGE = os.getenv("CHUTE_BASE_IMAGE", "elbios/vibevoice-whisper:latest")
 CHUTE_PYTHON_VERSION = os.getenv("CHUTE_PYTHON_VERSION", "3.11")
 CHUTE_NAME = "vibevoice-whisper"
-CHUTE_TAG = "tts-stt-v0.1.9"
+CHUTE_TAG = "tts-stt-v0.1.11"
 
 # Chute environment variables (used during discovery and runtime)
 CHUTE_ENV = {
@@ -77,13 +74,20 @@ No custom TTS logic remains in this repo — requests are simply forwarded to th
 # These build steps set up a Debian-based image for Chutes runtime.
 # Adjust CHUTE_BASE_IMAGE to reuse with other elbios/* or compatible images.
 
-image = build_wrapper_image(
-    username=USERNAME,
-    name=CHUTE_NAME,
-    tag=CHUTE_TAG,
-    base_image=CHUTE_BASE_IMAGE,
-    python_version=CHUTE_PYTHON_VERSION,
-    env=CHUTE_ENV,
+image = (
+    build_wrapper_image(
+        username=USERNAME,
+        name=CHUTE_NAME,
+        tag=CHUTE_TAG,
+        base_image=CHUTE_BASE_IMAGE,
+        python_version=CHUTE_PYTHON_VERSION,
+        env=CHUTE_ENV,
+    )
+    .add(source="tools", dest="/app/tools")
+    # VibeVoice creates models/inputs/outputs/temp dirs in /opt/vibevoice at runtime
+    .set_user("root")
+    .run_command("chmod -R a+rwx /opt/vibevoice 2>/dev/null || true")
+    .set_user("chutes")
 )
 
 chute = Chute(
@@ -99,8 +103,6 @@ chute = Chute(
 )
 
 register_passthrough_routes(chute, load_route_manifest(static_routes=CHUTE_STATIC_ROUTES), DEFAULT_SERVICE_PORT)
-register_startup_wait(chute, SERVICE_PORTS, LOCAL_HOST)
-register_health_check(chute, SERVICE_PORTS, LOCAL_HOST)
 
 
 # =============================================================================
