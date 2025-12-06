@@ -942,7 +942,7 @@ do_check_logs() {
         fi
     done
     
-    python3 "$SCRIPT_DIR/tools/instance_logs.py" "$chute_name" $warmup_arg
+    python3 "$SCRIPT_DIR/tools/instance_logs.py" "$chute_name" $warmup_arg --stream
 }
 
 show_account_info() {
