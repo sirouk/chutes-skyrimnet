@@ -96,13 +96,16 @@ ENTRYPOINT = os.getenv("CHUTE_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh"
 # build_wrapper_image sets up a Debian-based image with Chutes runtime deps.
 # It extends your CHUTE_BASE_IMAGE with necessary tooling.
 
-image = build_wrapper_image(
-    username=USERNAME,
-    name=CHUTE_NAME,
-    tag=CHUTE_TAG,
-    base_image=CHUTE_BASE_IMAGE,
-    python_version=CHUTE_PYTHON_VERSION,
-    env=CHUTE_ENV,
+image = (
+    build_wrapper_image(
+        username=USERNAME,
+        name=CHUTE_NAME,
+        tag=CHUTE_TAG,
+        base_image=CHUTE_BASE_IMAGE,
+        python_version=CHUTE_PYTHON_VERSION,
+        env=CHUTE_ENV,
+    )
+    .add(source="tools", dest="/app/tools")
 )
 
 # =============================================================================
