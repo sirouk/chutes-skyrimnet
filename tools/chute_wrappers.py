@@ -135,12 +135,12 @@ def build_wrapper_image(
     # Note: Only same-version packages will work; C extensions need matching Python version
     link_external_packages_cmd = (
         "python -c \""
-        "import sys,os,pathlib,site,glob;"
+        "import sys,os,pathlib,site;"
         "pyver=f'python{sys.version_info.major}.{sys.version_info.minor}';"
         "print(f'Linking fallback packages for {pyver}...');"
+        # Only link site-packages matching current Python version (mixing versions breaks imports)
         "bases=[os.environ.get('CONDA_PREFIX',''),'/opt/conda','/opt/mamba','/root/miniconda3','/root/anaconda3'];"
         "paths=[f'{b}/lib/{pyver}/site-packages' for b in bases if b and pathlib.Path(f'{b}/lib/{pyver}/site-packages').is_dir()];"
-        "paths+=[p for p in glob.glob('/opt/conda/lib/python*/site-packages') if p not in paths and pathlib.Path(p).is_dir()];"
         "seen=set();paths=[p for p in paths if p not in seen and not seen.add(p)];"
         "print(f'Fallback paths: {paths}');"
         "pth=pathlib.Path(site.getsitepackages()[0])/'chutes_compat.pth';"
