@@ -1,6 +1,4 @@
 import os
-import signal
-import subprocess
 from configparser import ConfigParser
 
 from chutes.chute import Chute, NodeSelector
