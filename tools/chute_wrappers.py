@@ -486,6 +486,8 @@ def _register_single_route(chute, route: dict, idx: int, default_port: int) -> N
     stream = bool(route.get("stream", False))
 
     internal_path = f"{method.lower()}_{_sanitize_route_name(path)}_{idx}"
+    # Use an internal path for uniqueness (handles same public path with different methods),
+    # while exposing the real public_api_path/method outward.
     decorator = chute.cord(
         path=internal_path,
         public_api_path=path,
