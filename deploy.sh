@@ -314,6 +314,60 @@ do_chute_status() {
     chutes chutes get "$chute_name" || print_error "Could not get chute status"
 }
 
+list_chute_names_from_modules() {
+    for f in "$SCRIPT_DIR"/deploy_*.py; do
+        if [[ -f "$f" ]]; then
+            local name
+            name=$(grep -oP "CHUTE_NAME\s*=\s*['\"]\\K[^'\"]*" "$f" 2>/dev/null | head -1)
+            if [[ -z "$name" ]]; then
+                name=$(basename "$f" .py)
+                name="${name#deploy_}"
+            fi
+            [[ -n "$name" ]] && echo "$name"
+        fi
+    done
+}
+
+module_to_chute_name() {
+    local module="$1"
+    local py_file="$SCRIPT_DIR/${module}.py"
+    local chute_name=""
+
+    if [[ -f "$py_file" ]]; then
+        chute_name=$(grep -oP "CHUTE_NAME\s*=\s*['\"]\\K[^'\"]*" "$py_file" 2>/dev/null | head -1)
+    fi
+
+    if [[ -z "$chute_name" ]]; then
+        chute_name="${module#deploy_}"
+    fi
+
+    echo "$chute_name"
+}
+
+select_chute_for_status() {
+    # Send all UI to stderr so command substitution only captures the name
+    print_header "Select Chute for Status" >&2
+
+    local module
+    module=$(select_module "Select module for chute status") || return 1
+
+    local chute_name
+    chute_name=$(module_to_chute_name "$module")
+
+    if [[ -z "$chute_name" ]]; then
+        print_warning "Could not infer chute name from $module" >&2
+        read -rp "Enter chute name manually: " manual_name >&2
+        if [[ -z "$manual_name" ]]; then
+            print_error "Chute name is required" >&2
+            return 1
+        fi
+        chute_name="$manual_name"
+    fi
+
+    echo "$chute_name"
+    return 0
+}
+
 do_build() {
     local module="$1"
     local local_flag=""
@@ -369,13 +423,21 @@ do_build() {
     ensure_venv
     
     # shellcheck disable=SC2086
+    set +e
     if [[ -f "$manifest_file" ]]; then
-        CHUTES_ROUTE_MANIFEST="$manifest_file" CHUTES_USERNAME="$username" chutes build "${module}:chute" $local_flag $debug_flag --wait
+        CHUTES_BUILD_AUTO_YES=1 CHUTES_ROUTE_MANIFEST="$manifest_file" CHUTES_USERNAME="$username" chutes build "${module}:chute" $local_flag $debug_flag --wait
     else
-        CHUTES_USERNAME="$username" chutes build "${module}:chute" $local_flag $debug_flag --wait
+        CHUTES_BUILD_AUTO_YES=1 CHUTES_USERNAME="$username" chutes build "${module}:chute" $local_flag $debug_flag --wait
     fi
+    build_status=$?
+    set -e
     
-    print_success "Build complete"
+    if [[ $build_status -eq 0 ]]; then
+        print_success "Build complete"
+    else
+        print_error "Build failed (exit $build_status)"
+        return $build_status
+    fi
     
     # For local builds, test chutes-inspecto.so compatibility
     if $LOCAL_BUILD; then
@@ -646,6 +708,89 @@ verify_chute_cords() {
     return 1
 }
 
+get_api_key() {
+    if [[ -n "${CHUTES_API_KEY:-}" ]]; then
+        echo "$CHUTES_API_KEY"
+        return 0
+    fi
+
+    local key_file="$HOME/.chutes/api_key"
+    if [[ -f "$key_file" ]]; then
+        local key
+        key=$(head -n1 "$key_file" 2>/dev/null | tr -d '[:space:]')
+        if [[ -n "$key" ]]; then
+            echo "$key"
+            return 0
+        fi
+    fi
+
+    print_error "CHUTES_API_KEY not set and ~/.chutes/api_key missing"
+    print_info "Create one with: chutes keys create <name>"
+    print_info "Or export CHUTES_API_KEY=cpk_..."
+    return 1
+}
+
+get_api_base_url() {
+    local base_url
+    base_url=$(grep -E "^base_url" "$HOME/.chutes/config.ini" 2>/dev/null | head -n1 | cut -d'=' -f2 | tr -d '[:space:]')
+    if [[ -z "$base_url" ]]; then
+        base_url="https://api.chutes.ai"
+    fi
+    echo "$base_url"
+}
+
+select_instance_id_from_output() {
+    python3 - 2>/dev/null <<'PYCODE'
+import json, re, sys
+output = sys.stdin.read()
+match = re.search(r'\{[\s\S]*\}', output)
+if not match:
+    sys.exit(1)
+try:
+    data = json.loads(match.group())
+except Exception:
+    sys.exit(1)
+instances = data.get("instances") or []
+if not instances:
+    sys.exit(1)
+
+def sort_key(inst):
+    return (not inst.get("active", False), not inst.get("verified", False), inst.get("last_verified_at") or "")
+
+instances = sorted(instances, key=sort_key)
+
+if len(instances) == 1:
+    print(instances[0]["instance_id"])
+    sys.exit(0)
+
+print("\nInstances:", file=sys.stderr)
+for i, inst in enumerate(instances, 1):
+    print(f"  {i}) {inst.get('instance_id')}  active={inst.get('active')} verified={inst.get('verified')}", file=sys.stderr)
+
+if not sys.stdin.isatty():
+    idx = 0
+else:
+    try:
+        prompt = f"Select instance (1-{len(instances)}) [1]: "
+        sys.stderr.write(prompt)
+        sys.stderr.flush()
+        choice = sys.stdin.readline().strip()
+    except EOFError:
+        choice = ""
+    if not choice:
+        idx = 0
+    else:
+        try:
+            idx = int(choice) - 1
+        except ValueError:
+            sys.exit(1)
+        if idx < 0 or idx >= len(instances):
+            idx = 0
+
+print(instances[idx]["instance_id"])
+PYCODE
+}
+
 do_run_docker() {
     local module="$1"
     
@@ -841,44 +986,78 @@ do_deploy() {
 
 list_deployed_chutes() {
     # Get list of deployed chutes (names only)
-    # The output format from chutes varies, try to extract names
+    # Accepts optional input: either a file path or pre-fetched text
     ensure_venv
-    local output
-    output=$(chutes chutes list 2>&1)
+    local input="${1:-}"
+    local output=""
+    
+    if [[ -n "$input" && -f "$input" ]]; then
+        output=$(cat "$input")
+    else
+        output="$input"
+    fi
+    
+    if [[ -z "$output" ]]; then
+        output=$(chutes chutes list 2>&1)
+    fi
     
     # Check if any chutes found
     if echo "$output" | grep -q "Found 0 matching"; then
         return 0
     fi
     
-    # Try to extract chute names - look for lines with chute-like names
-    # Format may be: "name     status    ..."
-    echo "$output" | grep -E "^[a-z0-9]" | awk '{print $1}' | grep -v "^[0-9]" 2>/dev/null || true
+    # Try to extract chute names from table output (box-drawn or plain)
+    # Prefer the Name column in the table; fallback to whitespace-delimited lines
+    printf "%s\n" "$output" | awk -F '│' '
+        NF >= 3 {
+            gsub(/^[ \t]+|[ \t]+$/, "", $2)
+            name=$2
+            if (name != "" && name != "Name" && name != "NAME" && name != "NAME ") {
+                print name
+            }
+        }
+    ' | grep -v "^[0-9]" 2>/dev/null || true
+    
+    printf "%s\n" "$output" | grep -E "^[a-z0-9]" | awk '{print $1}' | grep -v "^[0-9]" 2>/dev/null || true
 }
 
 select_chute_to_delete() {
-    print_header "Select Chute to Delete"
-    
     local chutes=()
-    while IFS= read -r line; do
-        [[ -n "$line" ]] && chutes+=("$line")
-    done < <(list_deployed_chutes)
+    local choice=""
+    
+    {
+        print_header "Select Chute to Delete"
+        
+        local tmp_output
+        tmp_output=$(mktemp)
+        chutes chutes list 2>&1 | tee "$tmp_output"
+        echo ""
+        
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && chutes+=("$line")
+        done < <(list_deployed_chutes "$tmp_output")
+        rm -f "$tmp_output"
+        
+        if [[ ${#chutes[@]} -eq 0 ]]; then
+            print_warning "No deployed chutes found"
+            echo ""
+        else
+            echo -e "${BLUE}Deployed Chutes:${NC}"
+            local i=1
+            for c in "${chutes[@]}"; do
+                echo -e "  ${GREEN}$i)${NC} $c"
+                i=$((i + 1))
+            done
+            echo -e "  ${YELLOW}b)${NC} Back"
+            echo ""
+            
+            read -rp "Select chute to delete (1-${#chutes[@]}): " choice
+        fi
+    } >&2
     
     if [[ ${#chutes[@]} -eq 0 ]]; then
-        print_warning "No deployed chutes found"
         return 1
     fi
-    
-    echo -e "${BLUE}Deployed Chutes:${NC}"
-    local i=1
-    for c in "${chutes[@]}"; do
-        echo -e "  ${GREEN}$i)${NC} $c"
-        i=$((i + 1))
-    done
-    echo -e "  ${YELLOW}b)${NC} Back"
-    echo ""
-    
-    read -rp "Select chute to delete (1-${#chutes[@]}): " choice
     
     if [[ "$choice" == "b" || "$choice" == "B" ]]; then
         return 1
@@ -922,27 +1101,280 @@ do_delete() {
     print_success "Chute deleted"
 }
 
+list_built_images() {
+    # Get list of built images (names only from chutes images list)
+    # Accepts optional input: either a file path or pre-fetched text
+    local input="${1:-}"
+    local output=""
+    
+    if [[ -n "$input" && -f "$input" ]]; then
+        output=$(cat "$input")
+    else
+        output="$input"
+    fi
+    
+    if [[ -z "$output" ]]; then
+        ensure_venv
+        output=$(chutes images list 2>&1)
+    fi
+    
+    if printf "%s\n" "$output" | grep -q "Found 0 matching"; then
+        return 0
+    fi
+    
+    printf "%s\n" "$output" | awk -F '│' '
+        NF >= 3 {
+            gsub(/^[ \t]+|[ \t]+$/, "", $2)
+            name=$2
+            if (name != "" && name != "Name" && name != "NAME") {
+                print name
+            }
+        }
+    ' | grep -v "^[0-9]" 2>/dev/null || true
+}
+
+select_image_to_delete() {
+    ensure_venv
+    local tmp_output
+    tmp_output=$(mktemp)
+    
+    local images=()
+    local choice=""
+    
+    {
+        print_header "Select Image to Delete"
+        chutes images list 2>&1 | tee "$tmp_output"
+        echo ""
+        
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && images+=("$line")
+        done < <(list_built_images "$tmp_output")
+        
+        if [[ ${#images[@]} -eq 0 ]]; then
+            print_warning "No built images found"
+            echo ""  # spacing
+        else
+            echo -e "${BLUE}Built Images:${NC}"
+            local i=1
+            for img in "${images[@]}"; do
+                echo -e "  ${GREEN}$i)${NC} $img"
+                i=$((i + 1))
+            done
+            echo -e "  ${YELLOW}b)${NC} Back"
+            echo ""
+            
+            read -rp "Select image to delete (1-${#images[@]}): " choice
+        fi
+    } >&2
+    
+    rm -f "$tmp_output"
+    
+    if [[ ${#images[@]} -eq 0 ]]; then
+        return 1
+    fi
+    
+    if [[ "$choice" == "b" || "$choice" == "B" ]]; then
+        return 1
+    fi
+    
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#images[@]} ]]; then
+        echo "${images[$((choice - 1))]}"
+        return 0
+    else
+        print_error "Invalid selection"
+        return 1
+    fi
+}
+
+do_delete_image() {
+    local image_name="$1"
+    
+    print_header "Delete Image: $image_name"
+    
+    print_error "WARNING: This action is permanent!"
+    echo ""
+    
+    if ! confirm "Are you sure you want to delete '$image_name'?"; then
+        print_info "Deletion cancelled"
+        return 0
+    fi
+    
+    read -rp "Type the image name to confirm: " confirm_name
+    if [[ "$confirm_name" != "$image_name" ]]; then
+        print_error "Names don't match. Deletion cancelled."
+        return 1
+    fi
+    
+    echo ""
+    print_cmd "chutes images delete \"$image_name\""
+    echo ""
+    
+    ensure_venv
+    chutes images delete "$image_name"
+    local status=$?
+    if [[ $status -eq 0 ]]; then
+        print_success "Image deleted"
+    else
+        print_error "Failed to delete image (exit $status)"
+    fi
+}
+
 do_check_logs() {
     local chute_name="$1"
     
     print_header "Instance Logs: $chute_name"
     
     ensure_venv
+
+    local api_key
+    api_key=$(get_api_key) || return 1
+    local base_url
+    base_url=$(get_api_base_url)
+
+    # Get chute JSON and extract instances (avoid pipes to keep output intact)
+    local tmp_output
+    tmp_output=$(mktemp)
+    chutes chutes get "$chute_name" >"$tmp_output" 2>&1 || true
+
+    local interactive_mode="nontty"
+    if [[ -t 0 ]]; then
+        interactive_mode="tty"
+    fi
+
+    local instance_id
+    instance_id=$(python - "$tmp_output" "$interactive_mode" <<'PYCODE' || true
+import json, re, sys
+path = sys.argv[1]
+interactive = sys.argv[2] if len(sys.argv) > 2 else "nontty"
+try:
+    text = open(path, encoding="utf-8", errors="replace").read()
+except Exception:
+    sys.exit(1)
+match = re.search(r'\{[\s\S]*\}', text)
+if not match:
+    sys.exit(1)
+data = json.loads(match.group())
+instances = data.get("instances") or []
+if not instances:
+    sys.exit(1)
+def sort_key(inst):
+    return (not inst.get("active", False), not inst.get("verified", False), inst.get("last_verified_at") or "")
+instances = sorted(instances, key=sort_key)
+if len(instances) == 1:
+    print(instances[0]["instance_id"])
+    sys.exit(0)
+print("\nInstances:", file=sys.stderr)
+for i, inst in enumerate(instances, 1):
+    print(f"  {i}) {inst.get('instance_id')}  active={inst.get('active')} verified={inst.get('verified')}", file=sys.stderr)
+if interactive != "tty":
+    idx = 0
+else:
+    try:
+        prompt = f"Select instance (1-{len(instances)}) [1]: "
+        sys.stderr.write(prompt)
+        sys.stderr.flush()
+        choice = sys.stdin.readline().strip()
+    except EOFError:
+        choice = ""
+    if not choice:
+        idx = 0
+    else:
+        try:
+            idx = int(choice) - 1
+        except ValueError:
+            sys.exit(1)
+        if idx < 0 or idx >= len(instances):
+            idx = 0
+print(instances[idx]["instance_id"])
+PYCODE
+)
+    rm -f "$tmp_output"
+
+    if [[ -z "$instance_id" ]]; then
+        print_error "No instances available for $chute_name"
+        return 1
+    fi
+
+    print_info "Streaming logs from instance: $instance_id"
+    local logs_url="${base_url}/instances/${instance_id}/logs"
+    print_cmd "curl -N -H \"Authorization: Bearer <redacted>\" \"$logs_url\""
+    echo ""
+    set +e
+    curl -N -H "Authorization: Bearer ${api_key}" "$logs_url"
+    local curl_status=$?
+    set -e
+    if [[ $curl_status -ne 0 ]]; then
+        print_warning "curl exited with status $curl_status"
+    fi
+    return 0
+}
+
+select_chute_for_warmup() {
+    local chutes=()
+    local choice=""
     
-    # Try to find matching deploy module for warmup
-    local warmup_arg=""
-    for f in "$SCRIPT_DIR"/deploy_*.py; do
-        if [[ -f "$f" ]]; then
-            local module=$(basename "$f" .py)
-            # Check if this module's CHUTE_NAME matches
-            if grep -q "CHUTE_NAME.*=.*['\"]${chute_name}['\"]" "$f" 2>/dev/null; then
-                warmup_arg="--warmup ${module}:chute"
-                break
-            fi
+    {
+        print_header "Select Chute to Warmup"
+        
+        local tmp_output
+        tmp_output=$(mktemp)
+        chutes chutes list 2>&1 | tee "$tmp_output"
+        echo ""
+        
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && chutes+=("$line")
+        done < <(list_deployed_chutes "$tmp_output")
+        rm -f "$tmp_output"
+        
+        if [[ ${#chutes[@]} -eq 0 ]]; then
+            print_warning "No deployed chutes found"
+            echo ""
+        else
+            echo -e "${BLUE}Deployed Chutes:${NC}"
+            local i=1
+            for c in "${chutes[@]}"; do
+                echo -e "  ${GREEN}$i)${NC} $c"
+                i=$((i + 1))
+            done
+            echo -e "  ${YELLOW}b)${NC} Back"
+            echo ""
+            
+            read -rp "Select chute to warm up (1-${#chutes[@]}): " choice
         fi
-    done
+    } >&2
     
-    python3 "$SCRIPT_DIR/tools/instance_logs.py" "$chute_name" $warmup_arg --stream
+    if [[ ${#chutes[@]} -eq 0 ]]; then
+        return 1
+    fi
+    
+    if [[ "$choice" == "b" || "$choice" == "B" ]]; then
+        return 1
+    fi
+    
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#chutes[@]} ]]; then
+        echo "${chutes[$((choice - 1))]}"
+        return 0
+    else
+        print_error "Invalid selection"
+        return 1
+    fi
+}
+
+do_warmup() {
+    local chute_name="$1"
+    print_header "Warmup: ${chute_name}"
+    
+    ensure_venv
+    
+    print_cmd "chutes warmup \"${chute_name}\""
+    echo ""
+    
+    if chutes warmup "${chute_name}"; then
+        print_success "Warmup triggered for ${chute_name}"
+    else
+        print_error "Warmup failed for ${chute_name}"
+        return 1
+    fi
 }
 
 show_account_info() {
@@ -963,6 +1395,52 @@ show_account_info() {
     print_info "Account needs >= \$50 USD balance for remote builds"
 }
 
+do_create_from_image() {
+    print_header "Create Chute from Docker Image"
+    
+    local image
+    read -rp "Docker Image (e.g. elbios/xtts-whisper:latest): " image
+    if [[ -z "$image" ]]; then
+        print_error "Image is required"
+        return 1
+    fi
+    
+    local name
+    read -rp "Chute Name (optional, press Enter for auto): " name
+    
+    local gpus
+    read -rp "GPUs (e.g. all, 0, none) [all]: " gpus
+    gpus=${gpus:-all}
+    
+    local -a env_args=()
+    echo -e "\nEnter Environment Variables (KEY=VALUE). Press Enter on empty line to finish."
+    while true; do
+        local env_var
+        read -rp "ENV: " env_var
+        if [[ -z "$env_var" ]]; then
+            break
+        fi
+        env_args+=("--env" "$env_var")
+    done
+    
+    echo ""
+    print_info "Creating chute definition..."
+    
+    ensure_venv
+    
+    local cmd=(python3 "$SCRIPT_DIR/tools/create_chute_from_image.py" "$image" "--gpus" "$gpus" "--startup-delay" "120" "--interactive")
+    if [[ -n "$name" ]]; then
+        cmd+=("--name" "$name")
+    fi
+    
+    if [[ ${#env_args[@]} -gt 0 ]]; then
+        cmd+=("${env_args[@]}")
+    fi
+    
+    print_cmd "${cmd[*]}"
+    "${cmd[@]}"
+}
+
 # =============================================================================
 # Interactive Menu
 # =============================================================================
@@ -975,13 +1453,16 @@ show_menu() {
     echo ""
     echo -e "  ${GREEN}1)${NC} List images"
     echo -e "  ${GREEN}2)${NC} List chutes"
-    echo -e "  ${GREEN}3)${NC} Build chute"
-    echo -e "  ${GREEN}4)${NC} Run in Docker (GPU, for wrapped services)"
-    echo -e "  ${GREEN}5)${NC} Run dev mode (host, for Python chutes)"
-    echo -e "  ${GREEN}6)${NC} Deploy chute"
-    echo -e "  ${GREEN}7)${NC} Chute status"
-    echo -e "  ${GREEN}8)${NC} Delete chute"
-    echo -e "  ${GREEN}9)${NC} Instance logs"
+    echo -e "  ${GREEN}3)${NC} Create chute file from Docker image"
+    echo -e "  ${GREEN}4)${NC} Build chute"
+    echo -e "  ${GREEN}5)${NC} Run in Docker (GPU, for wrapped services)"
+    echo -e "  ${GREEN}6)${NC} Run dev mode (host, for Python chutes)"
+    echo -e "  ${GREEN}7)${NC} Deploy chute"
+    echo -e "  ${GREEN}8)${NC} Warmup chute"
+    echo -e "  ${GREEN}9)${NC} Chute status"
+    echo -e "  ${GREEN}10)${NC} Instance logs"
+    echo -e "  ${GREEN}11)${NC} Delete chute"
+    echo -e "  ${GREEN}12)${NC} Delete image"
     echo -e "  ${GREEN}0)${NC} Account info"
     echo -e "  ${GREEN}q)${NC} Quit"
     echo ""
@@ -1157,6 +1638,9 @@ main() {
                 do_list_chutes
                 ;;
             3)
+                do_create_from_image
+                ;;
+            4)
                 module=$(select_module "Select module to build") || continue
                 if ! prompt_route_discovery_before_build "$module"; then
                     continue
@@ -1178,7 +1662,7 @@ main() {
                     *) print_error "Invalid option" ;;
                 esac
                 ;;
-            4)
+            5)
                 # Run in Docker (for wrapped services like XTTS)
                 show_running_chute_containers
                 module=$(select_module "Select module to run in Docker") || continue
@@ -1187,7 +1671,7 @@ main() {
                 do_run_docker "$module"
                 PORT=8000
                 ;;
-            5)
+            6)
                 # Run dev mode (for Python chutes, runs on host)
                 show_running_chute_processes
                 module=$(select_module "Select module for dev mode") || continue
@@ -1198,24 +1682,19 @@ main() {
                 DEV_MODE=false
                 PORT=8000
                 ;;
-            6)
+            7)
                 module=$(select_module "Select module to deploy") || continue
                 do_deploy "$module"
                 ;;
-            7)
-                echo ""
-                read -rp "Enter chute name: " chute_name
-                if [[ -n "$chute_name" ]]; then
-                    do_chute_status "$chute_name"
-                fi
-                ;;
             8)
-                chute_name=$(select_chute_to_delete) || continue
-                if [[ -n "$chute_name" ]]; then
-                    do_delete "$chute_name"
-                fi
+                chute_name=$(select_chute_for_warmup) || continue
+                do_warmup "$chute_name"
                 ;;
             9)
+                chute_name=$(select_chute_for_status) || continue
+                do_chute_status "$chute_name"
+                ;;
+            10)
                 module=$(select_module "Select module for logs") || continue
                 # Extract CHUTE_NAME from the module file
                 chute_name=$(grep -oP "CHUTE_NAME\s*=\s*['\"]\\K[^'\"]*" "$SCRIPT_DIR/${module}.py" 2>/dev/null)
@@ -1223,6 +1702,18 @@ main() {
                     chute_name="${module#deploy_}"  # fallback: strip deploy_ prefix
                 fi
                 do_check_logs "$chute_name"
+                ;;
+            11)
+                chute_name=$(select_chute_to_delete) || continue
+                if [[ -n "$chute_name" ]]; then
+                    do_delete "$chute_name"
+                fi
+                ;;
+            12)
+                image_name=$(select_image_to_delete) || continue
+                if [[ -n "$image_name" ]]; then
+                    do_delete_image "$image_name"
+                fi
                 ;;
             0)
                 show_account_info

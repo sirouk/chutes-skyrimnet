@@ -51,13 +51,25 @@ Interactive menu with options:
 |--------|-------------|
 | 1. List images | Show built Docker images |
 | 2. List chutes | Show deployed chutes |
-| 3. Build chute | Local or remote build (prompts for route discovery first) |
-| 4. Run in Docker | Run wrapped image with GPU (for testing) |
-| 5. Run dev mode | Run on host (Python chutes) |
-| 6. Deploy chute | Deploy to Chutes.ai |
-| 7. Chute status | Get status of a deployed chute |
-| 8. Delete chute | Remove a deployed chute |
-| 9. Account info | Show username and payment address |
+| 3. Create chute file from Docker image | Generate a deploy module from an upstream image |
+| 4. Build chute | Local or remote build (prompts for route discovery first) |
+| 5. Run in Docker | Run wrapped image with GPU (for testing) |
+| 6. Run dev mode | Run on host (Python chutes) |
+| 7. Deploy chute | Deploy to Chutes.ai |
+| 8. Warmup chute | Warm a deployed chute |
+| 9. Chute status | Get status of a deployed chute |
+| 10. Instance logs | View logs for a chute instance |
+| 11. Delete chute | Remove a deployed chute |
+| 12. Delete image | Remove a built image |
+| 0. Account info | Show username and payment address |
+| q. Quit | Exit menu |
+
+### Deleting chutes and images
+
+- Chutes must be removed before deleting their images; images tied to running chutes/containers cannot be deleted safely.
+- Delete a chute: `chutes chutes delete <chute_id>`
+- After the chute is gone (and no containers are running), delete its image: `chutes images delete <image_id>`
+- If unsure of names/IDs, use `./deploy.sh` option 2 (list chutes) and option 1 (list images) first.
 
 Or use flags directly:
 
