@@ -15,7 +15,7 @@ chutes_config.read(os.path.expanduser("~/.chutes/config.ini"))
 USERNAME = os.getenv("CHUTES_USERNAME") or chutes_config.get("auth", "username", fallback="chutes")
 CHUTE_GPU_COUNT = int(os.getenv("CHUTE_GPU_COUNT", "1"))
 CHUTE_MIN_VRAM_GB_PER_GPU = int(os.getenv("CHUTE_MIN_VRAM_GB_PER_GPU", "16"))  # Chutes minimum; XTTS ~1.5GB + Whisper ~1.5GB
-CHUTE_SHUTDOWN_AFTER_SECONDS = int(os.getenv("CHUTE_SHUTDOWN_AFTER_SECONDS", "3600"))
+CHUTE_SHUTDOWN_AFTER_SECONDS = int(os.getenv("CHUTE_SHUTDOWN_AFTER_SECONDS", "86400"))
 CHUTE_CONCURRENCY = int(os.getenv("CHUTE_CONCURRENCY", "6"))  # Lightweight model
 
 SERVICE_PORTS = [int(p.strip()) for p in os.getenv("CHUTE_PORTS", "8020,8080").split(",") if p.strip()]
@@ -27,7 +27,7 @@ ENTRYPOINT = os.getenv("CHUTE_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh"
 CHUTE_BASE_IMAGE = os.getenv("CHUTE_BASE_IMAGE", "elbios/xtts-whisper:latest")
 CHUTE_PYTHON_VERSION = os.getenv("CHUTE_PYTHON_VERSION", "3.11")
 CHUTE_NAME = "xtts-whisper"
-CHUTE_TAG = "tts-stt-v0.1.11"
+CHUTE_TAG = "tts-stt-v0.1.12"
 
 # Chute environment variables (used during discovery and runtime)
 CHUTE_ENV = {
@@ -38,7 +38,7 @@ CHUTE_ENV = {
     "TORCH_HOME": "/cache/torch",
     "WHISPER_MODELS_DIR": "/cache/whispercpp",
     # Disable base image's Vast.ai watchdog (Chutes has its own shutdown_after_seconds)
-    "MAX_IDLE_SECONDS": "31536000",
+    "MAX_IDLE_SECONDS": "86400",
 }
 
 # Static routes for whisper.cpp (port 8080) - doesn't expose OpenAPI
@@ -47,7 +47,6 @@ CHUTE_ENV = {
 CHUTE_STATIC_ROUTES = [
     {"port": 8080, "method": "GET", "path": "/load", "target_path": "/load"},
     {"port": 8080, "method": "POST", "path": "/inference", "target_path": "/inference"},
-    {"port": 8080, "method": "POST", "path": "/load", "target_path": "/load"},
     {"port": 8080, "method": "POST", "path": "/v1/audio/transcriptions", "target_path": "/inference"},
 ]
 CHUTE_TAGLINE = "elbios/xtts-whisper (XTTS + Whisper.cpp)"
