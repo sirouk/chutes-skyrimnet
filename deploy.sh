@@ -1022,7 +1022,8 @@ list_deployed_chutes() {
 }
 
 select_chute_to_delete() {
-    local chutes=()
+    local chute_ids=()
+    local chute_names=()
     local choice=""
     
     {
@@ -1033,29 +1034,60 @@ select_chute_to_delete() {
         chutes chutes list 2>&1 | tee "$tmp_output"
         echo ""
         
-        while IFS= read -r line; do
-            [[ -n "$line" ]] && chutes+=("$line")
-        done < <(list_deployed_chutes "$tmp_output")
+        # Parse box table: ID in col1, Name in col2
+        while IFS=$'\t' read -r cid_raw cname; do
+            [[ -n "$cid_raw" && -n "$cname" ]] || continue
+            # Keep only UUID-safe characters (alnum and hyphen), strip whitespace/box chars
+            cid=$(echo "$cid_raw" | tr -cd 'A-Za-z0-9-')
+            # Normalize multiple hyphens/back-to-back punctuation
+            cid=$(echo "$cid" | sed 's/--*/-/g')
+            # Accept full UUID format only
+            if [[ "$cid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+                chute_ids+=("$cid")
+                chute_names+=("$cname")
+            fi
+        done < <(
+            awk -F '│' 'NF>=3{
+                gsub(/^[ \t]+|[ \t]+$/, "", $1);
+                gsub(/^[ \t]+|[ \t]+$/, "", $2);
+                id=$1; name=$2;
+                if(id!="" && name!="" && id!="ID" && name!="Name"){print id"\t"name}
+            }' "$tmp_output"
+        )
         rm -f "$tmp_output"
+        if [[ ${#chute_ids[@]} -eq 0 ]]; then
+            while read -r cid; do
+                chute_ids+=("$cid")
+                chute_names+=("chute-${#chute_ids[@]}")
+            done < <(grep -Eo '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' "$tmp_output" | uniq)
+        fi
+        # Fallback: if no IDs parsed (e.g., table truncation with ellipsis), try regex on raw output
+        if [[ ${#chute_ids[@]} -eq 0 ]]; then
+            while read -r cid; do
+                chute_ids+=("$cid")
+                chute_names+=("chute-${#chute_ids[@]}")
+            done < <(grep -Eo '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' "$tmp_output" | uniq)
+        fi
         
-        if [[ ${#chutes[@]} -eq 0 ]]; then
+        if [[ ${#chute_ids[@]} -eq 0 ]]; then
             print_warning "No deployed chutes found"
             echo ""
         else
             echo -e "${BLUE}Deployed Chutes:${NC}"
             local i=1
-            for c in "${chutes[@]}"; do
-                echo -e "  ${GREEN}$i)${NC} $c"
+            while [[ $i -le ${#chute_ids[@]} ]]; do
+                local idx=$((i-1))
+                echo -e "  ${GREEN}$i)${NC} ${chute_names[$idx]} (id: ${chute_ids[$idx]})"
                 i=$((i + 1))
             done
             echo -e "  ${YELLOW}b)${NC} Back"
             echo ""
             
-            read -rp "Select chute to delete (1-${#chutes[@]}): " choice
+            read -rp "Select chute to delete (1-${#chute_ids[@]}): " choice
         fi
     } >&2
     
-    if [[ ${#chutes[@]} -eq 0 ]]; then
+    if [[ ${#chute_ids[@]} -eq 0 ]]; then
         return 1
     fi
     
@@ -1063,8 +1095,9 @@ select_chute_to_delete() {
         return 1
     fi
     
-    if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#chutes[@]} ]]; then
-        echo "${chutes[$((choice - 1))]}"
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#chute_ids[@]} ]]; then
+        local idx=$((choice - 1))
+        echo "${chute_ids[$idx]}|${chute_names[$idx]}"
         return 0
     else
         print_error "Invalid selection"
@@ -1073,30 +1106,35 @@ select_chute_to_delete() {
 }
 
 do_delete() {
-    local chute_name="$1"
+    local chute_ref="$1"
+    local chute_id="${chute_ref%%|*}"
+    local chute_name="${chute_ref#*|}"
+    if [[ "$chute_id" == "$chute_name" ]]; then
+        chute_name="$chute_id"
+    fi
     
-    print_header "Delete Chute: $chute_name"
+    print_header "Delete Chute: ${chute_name} (id: ${chute_id})"
     
     print_error "WARNING: This action is permanent!"
     echo ""
     
-    if ! confirm "Are you sure you want to delete '$chute_name'?"; then
+    if ! confirm "Are you sure you want to delete '${chute_name}' (id: ${chute_id})?"; then
         print_info "Deletion cancelled"
         return 0
     fi
     
-    read -rp "Type the chute name to confirm: " confirm_name
-    if [[ "$confirm_name" != "$chute_name" ]]; then
-        print_error "Names don't match. Deletion cancelled."
+    read -rp "Type the chute id to confirm: " confirm_id
+    if [[ "$confirm_id" != "$chute_id" ]]; then
+        print_error "IDs don't match. Deletion cancelled."
         return 1
     fi
     
     echo ""
-    print_cmd "chutes chutes delete \"$chute_name\""
+    print_cmd "chutes chutes delete \"$chute_id\""
     echo ""
     
     ensure_venv
-    chutes chutes delete "$chute_name"
+    chutes chutes delete "$chute_id"
     
     print_success "Chute deleted"
 }
@@ -1138,7 +1176,9 @@ select_image_to_delete() {
     local tmp_output
     tmp_output=$(mktemp)
     
-    local images=()
+    local image_ids=()
+    local image_names=()
+    local image_tags=()
     local choice=""
     
     {
@@ -1146,30 +1186,53 @@ select_image_to_delete() {
         chutes images list 2>&1 | tee "$tmp_output"
         echo ""
         
-        while IFS= read -r line; do
-            [[ -n "$line" ]] && images+=("$line")
-        done < <(list_built_images "$tmp_output")
+        # Parse box table: ID col1, Name col2, Tag col3
+        while IFS=$'\t' read -r iid_raw iname itag; do
+            [[ -n "$iid_raw" && -n "$iname" ]] || continue
+            iid=$(echo "$iid_raw" | tr -cd 'A-Za-z0-9-')
+            iid=$(echo "$iid" | sed 's/--*/-/g')
+            if [[ "$iid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+                image_ids+=("$iid")
+                image_names+=("$iname")
+                image_tags+=("${itag:-unknown}")
+            fi
+        done < <(
+            awk -F '│' 'NF>=3{
+                gsub(/^[ \t]+|[ \t]+$/, "", $1);
+                gsub(/^[ \t]+|[ \t]+$/, "", $2);
+                gsub(/^[ \t]+|[ \t]+$/, "", $3);
+                id=$1; name=$2; tag=$3;
+                if(id!="" && name!="" && id!="ID" && name!="Name"){print id"\t"name"\t"tag}
+            }' "$tmp_output"
+        )
+        if [[ ${#image_ids[@]} -eq 0 ]]; then
+            while read -r iid; do
+                image_ids+=("$iid")
+                image_names+=("image-${#image_ids[@]}")
+                image_tags+=("unknown")
+            done < <(grep -Eo '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' "$tmp_output" | uniq)
+        fi
+        rm -f "$tmp_output"
         
-        if [[ ${#images[@]} -eq 0 ]]; then
+        if [[ ${#image_ids[@]} -eq 0 ]]; then
             print_warning "No built images found"
             echo ""  # spacing
         else
             echo -e "${BLUE}Built Images:${NC}"
             local i=1
-            for img in "${images[@]}"; do
-                echo -e "  ${GREEN}$i)${NC} $img"
+            while [[ $i -le ${#image_ids[@]} ]]; do
+                local idx=$((i-1))
+                echo -e "  ${GREEN}$i)${NC} ${image_names[$idx]}:${image_tags[$idx]} (id: ${image_ids[$idx]})"
                 i=$((i + 1))
             done
             echo -e "  ${YELLOW}b)${NC} Back"
             echo ""
             
-            read -rp "Select image to delete (1-${#images[@]}): " choice
+            read -rp "Select image to delete (1-${#image_ids[@]}): " choice
         fi
     } >&2
     
-    rm -f "$tmp_output"
-    
-    if [[ ${#images[@]} -eq 0 ]]; then
+    if [[ ${#image_ids[@]} -eq 0 ]]; then
         return 1
     fi
     
@@ -1177,8 +1240,9 @@ select_image_to_delete() {
         return 1
     fi
     
-    if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#images[@]} ]]; then
-        echo "${images[$((choice - 1))]}"
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#image_ids[@]} ]]; then
+        local idx=$((choice - 1))
+        echo "${image_ids[$idx]}|${image_names[$idx]}|${image_tags[$idx]}"
         return 0
     else
         print_error "Invalid selection"
@@ -1187,30 +1251,34 @@ select_image_to_delete() {
 }
 
 do_delete_image() {
-    local image_name="$1"
+    local image_ref="$1"
+    local image_id="${image_ref%%|*}"
+    local rest="${image_ref#*|}"
+    local image_name="${rest%%|*}"
+    local image_tag="${rest#*|}"
     
-    print_header "Delete Image: $image_name"
+    print_header "Delete Image: ${image_name}:${image_tag} (id: ${image_id})"
     
     print_error "WARNING: This action is permanent!"
     echo ""
     
-    if ! confirm "Are you sure you want to delete '$image_name'?"; then
+    if ! confirm "Are you sure you want to delete '${image_name}:${image_tag}' (id: ${image_id})?"; then
         print_info "Deletion cancelled"
         return 0
     fi
     
-    read -rp "Type the image name to confirm: " confirm_name
-    if [[ "$confirm_name" != "$image_name" ]]; then
-        print_error "Names don't match. Deletion cancelled."
+    read -rp "Type the image id to confirm: " confirm_id
+    if [[ "$confirm_id" != "$image_id" ]]; then
+        print_error "IDs don't match. Deletion cancelled."
         return 1
     fi
     
     echo ""
-    print_cmd "chutes images delete \"$image_name\""
+    print_cmd "chutes images delete \"$image_id\""
     echo ""
     
     ensure_venv
-    chutes images delete "$image_name"
+    chutes images delete "$image_id"
     local status=$?
     if [[ $status -eq 0 ]]; then
         print_success "Image deleted"
@@ -1310,7 +1378,8 @@ PYCODE
 }
 
 select_chute_for_warmup() {
-    local chutes=()
+    local chute_ids=()
+    local chute_names=()
     local choice=""
     
     {
@@ -1321,29 +1390,44 @@ select_chute_for_warmup() {
         chutes chutes list 2>&1 | tee "$tmp_output"
         echo ""
         
-        while IFS= read -r line; do
-            [[ -n "$line" ]] && chutes+=("$line")
-        done < <(list_deployed_chutes "$tmp_output")
+        # Parse box table: ID in col1, Name in col2
+        while IFS=$'\t' read -r cid_raw cname; do
+            [[ -n "$cid_raw" && -n "$cname" ]] || continue
+            cid=$(echo "$cid_raw" | tr -cd 'A-Za-z0-9-')
+            cid=$(echo "$cid" | sed 's/--*/-/g')
+            if [[ "$cid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+                chute_ids+=("$cid")
+                chute_names+=("$cname")
+            fi
+        done < <(
+            awk -F '│' 'NF>=3{
+                gsub(/^[ \t]+|[ \t]+$/, "", $1);
+                gsub(/^[ \t]+|[ \t]+$/, "", $2);
+                id=$1; name=$2;
+                if(id!="" && name!="" && id!="ID" && name!="Name"){print id"\t"name}
+            }' "$tmp_output"
+        )
         rm -f "$tmp_output"
         
-        if [[ ${#chutes[@]} -eq 0 ]]; then
+        if [[ ${#chute_ids[@]} -eq 0 ]]; then
             print_warning "No deployed chutes found"
             echo ""
         else
             echo -e "${BLUE}Deployed Chutes:${NC}"
             local i=1
-            for c in "${chutes[@]}"; do
-                echo -e "  ${GREEN}$i)${NC} $c"
+            while [[ $i -le ${#chute_ids[@]} ]]; do
+                local idx=$((i-1))
+                echo -e "  ${GREEN}$i)${NC} ${chute_names[$idx]} (id: ${chute_ids[$idx]})"
                 i=$((i + 1))
             done
             echo -e "  ${YELLOW}b)${NC} Back"
             echo ""
             
-            read -rp "Select chute to warm up (1-${#chutes[@]}): " choice
+            read -rp "Select chute to warm up (1-${#chute_ids[@]}): " choice
         fi
     } >&2
     
-    if [[ ${#chutes[@]} -eq 0 ]]; then
+    if [[ ${#chute_ids[@]} -eq 0 ]]; then
         return 1
     fi
     
@@ -1351,8 +1435,9 @@ select_chute_for_warmup() {
         return 1
     fi
     
-    if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#chutes[@]} ]]; then
-        echo "${chutes[$((choice - 1))]}"
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#chute_ids[@]} ]]; then
+        local idx=$((choice - 1))
+        echo "${chute_ids[$idx]}|${chute_names[$idx]}"
         return 0
     else
         print_error "Invalid selection"
@@ -1361,20 +1446,51 @@ select_chute_for_warmup() {
 }
 
 do_warmup() {
-    local chute_name="$1"
-    print_header "Warmup: ${chute_name}"
+    local chute_ref="$1"
+    local chute_id="${chute_ref%%|*}"
+    local chute_name="${chute_ref#*|}"
+    if [[ "$chute_id" == "$chute_name" ]]; then
+        chute_name="$chute_id"
+    fi
+    print_header "Warmup: ${chute_name} (id: ${chute_id})"
     
     ensure_venv
     
-    print_cmd "chutes warmup \"${chute_name}\""
+    print_cmd "chutes warmup \"${chute_id}\""
     echo ""
     
-    if chutes warmup "${chute_name}"; then
+    if chutes warmup "${chute_id}"; then
         print_success "Warmup triggered for ${chute_name}"
     else
         print_error "Warmup failed for ${chute_name}"
         return 1
     fi
+}
+
+do_keep_warm() {
+    local chute_ref="$1"
+    local chute_id="${chute_ref%%|*}"
+    local chute_name="${chute_ref#*|}"
+    if [[ "$chute_id" == "$chute_name" ]]; then
+        chute_name="$chute_id"
+    fi
+    
+    read -rp "Warmup interval seconds [300]: " interval
+    interval=${interval:-300}
+    if ! [[ "$interval" =~ ^[0-9]+$ ]] || [[ "$interval" -le 0 ]]; then
+        print_error "Interval must be a positive integer"
+        return 1
+    fi
+    
+    print_header "Keep Warm: ${chute_name} (id: ${chute_id}) every ${interval}s"
+    print_info "Press Ctrl+C to stop."
+    ensure_venv
+    
+    while true; do
+        print_cmd "chutes warmup \"${chute_id}\""
+        chutes warmup "${chute_id}" || print_warning "Warmup failed for ${chute_name}"
+        sleep "$interval"
+    done
 }
 
 show_account_info() {
@@ -1459,6 +1575,7 @@ show_menu() {
     echo -e "  ${GREEN}6)${NC} Run dev mode (host, for Python chutes)"
     echo -e "  ${GREEN}7)${NC} Deploy chute"
     echo -e "  ${GREEN}8)${NC} Warmup chute"
+    echo -e "  ${GREEN}13)${NC} Keep chute warm (loop)"
     echo -e "  ${GREEN}9)${NC} Chute status"
     echo -e "  ${GREEN}10)${NC} Instance logs"
     echo -e "  ${GREEN}11)${NC} Delete chute"
@@ -1689,6 +1806,10 @@ main() {
             8)
                 chute_name=$(select_chute_for_warmup) || continue
                 do_warmup "$chute_name"
+                ;;
+            13)
+                chute_name=$(select_chute_for_warmup) || continue
+                do_keep_warm "$chute_name"
                 ;;
             9)
                 chute_name=$(select_chute_for_status) || continue

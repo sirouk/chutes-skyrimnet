@@ -95,6 +95,7 @@ This:
 3. Generates `deploy_xtts_whisper.routes.json`
 
 For services without OpenAPI (like whisper.cpp), define static routes in `CHUTE_STATIC_ROUTES`.
+Discovered manifests now include full cord parameters (public path, passthrough port/path, stream flag) plus the generated cord function name to match `chute.cord(...)` wiring.
 
 ---
 
@@ -125,7 +126,7 @@ CHUTE_STATIC_ROUTES = [
 ]
 
 # Build image with system Python (required for chutes-inspecto.so)
-image = build_wrapper_image(USERNAME, CHUTE_NAME, CHUTE_TAG, CHUTE_BASE_IMAGE, CHUTE_PYTHON_VERSION)
+image = build_wrapper_image(USERNAME, CHUTE_NAME, CHUTE_TAG, CHUTE_BASE_IMAGE, CHUTE_PYTHON_VERSION, readme=CHUTE_DOC)
 
 # Create chute
 chute = Chute(
@@ -169,7 +170,7 @@ register_health_check(chute, SERVICE_PORTS, LOCAL_HOST)
 
 | Function | Description |
 |----------|-------------|
-| `build_wrapper_image(username, name, tag, base_image, python_version="3.10")` | Create Chutes-compatible image with system Python |
+| `build_wrapper_image(username, name, tag, base_image, python_version="3.10", readme=None)` | Create Chutes-compatible image with system Python and embed readme text |
 | `load_route_manifest(static_routes=[])` | Load routes from `.routes.json`, merge/dedupe with static routes |
 | `register_passthrough_routes(chute, routes, default_port)` | Register routes as passthrough cords on chute |
 | `register_startup_wait(chute, ports, host, timeout=600)` | Register `on_startup` handler to wait for services |

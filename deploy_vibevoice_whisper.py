@@ -51,7 +51,6 @@ CHUTE_STATIC_ROUTES = [
     {"port": 8080, "method": "POST", "path": "/load", "target_path": "/load"},
 ]
 CHUTE_TAGLINE = "elbios/vibevoice-whisper (VibeVoice-1.5B + Whisper.cpp)"
-CHUTE_README = "Wrapper image that ships the latest elbios/vibevoice-whisper for deployment on Chutes."
 CHUTE_DOC = """
 ### VibeVoice Wrapper
 
@@ -80,6 +79,7 @@ image = (
         tag=CHUTE_TAG,
         base_image=CHUTE_BASE_IMAGE,
         python_version=CHUTE_PYTHON_VERSION,
+        readme=CHUTE_DOC,
         env=CHUTE_ENV,
     )
     .add(source="tools", dest="/app/tools")

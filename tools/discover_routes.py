@@ -27,6 +27,11 @@ DEFAULT_PROBE_PATHS: List[str] = [
 ]
 
 
+def _sanitize_route_name(path: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() else "_" for ch in path.strip("/"))
+    return cleaned or "root"
+
+
 def fetch_spec(base_url: str, probe_paths: Iterable[str]) -> dict:
     """Try a sequence of probe paths until we get an OpenAPI spec."""
     session = requests.Session()
@@ -43,21 +48,46 @@ def fetch_spec(base_url: str, probe_paths: Iterable[str]) -> dict:
     raise RuntimeError(f"Unable to fetch OpenAPI spec from {base_url}")
 
 
-def extract_routes(spec: dict, default_port: int) -> list[dict]:
+def extract_routes(
+    spec: dict,
+    default_port: int,
+    *,
+    name_tracker: dict[str, int] | None = None,
+) -> list[dict]:
     """Convert OpenAPI paths into the manifest format consumed by the chute blueprint."""
     routes: list[dict] = []
     paths = spec.get("paths", {})
+    name_tracker = name_tracker or {}
     for path, methods in paths.items():
         for method, definition in methods.items():
             if method.lower() not in {"get", "post", "put", "patch", "delete"}:
                 continue
+
+            stream = definition.get("x-stream", False)
+            base_name = f"{method.lower()}_{_sanitize_route_name(path)}"
+            suffix = name_tracker.get(base_name, 0)
+            name_tracker[base_name] = suffix + 1
+            internal_path = path  # keep public path; avoid numbered internal paths surfacing
+            function_name = f"cord_{internal_path}"
+
             routes.append(
                 {
                     "path": path,
                     "method": method.upper(),
                     "port": default_port,
                     "target_path": path,
-                    "stream": definition.get("x-stream", False),
+                    "stream": stream,
+                    "function_name": function_name,
+                    "cord": {
+                        "path": internal_path,
+                        "public_api_path": path,
+                        "public_api_method": method.upper(),
+                        "passthrough": True,
+                        "passthrough_port": default_port,
+                        "passthrough_path": path,
+                        "stream": stream,
+                        "function_name": function_name,
+                    },
                 }
             )
     return routes
@@ -134,7 +164,7 @@ def main() -> None:
         return
 
     spec = fetch_spec(args.base_url, probe_paths)
-    routes = extract_routes(spec, args.port)
+    routes = extract_routes(spec, args.port, name_tracker={})
     payload = {"routes": routes}
 
     write_manifest(payload, args.output)
@@ -189,6 +219,7 @@ def discover_from_chute_file(
     try:
         wait_with_logs(container_id, startup_delay)
         routes: list[dict] = []
+        name_tracker: dict[str, int] = {}
         for port in ports:
             base_url = get_host_url(container_id, port)
             try:
@@ -196,7 +227,7 @@ def discover_from_chute_file(
             except RuntimeError as exc:
                 print(f"[warn] {exc}", file=sys.stderr)
                 continue
-            routes.extend(extract_routes(spec, port))
+            routes.extend(extract_routes(spec, port, name_tracker=name_tracker))
         if not routes:
             raise RuntimeError("No routes discovered from any exposed ports.")
         return {"routes": routes, "source": name}

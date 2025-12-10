@@ -52,7 +52,6 @@ CHUTE_STATIC_ROUTES = [
     {"port": 8080, "method": "POST", "path": "/v1/audio/transcriptions", "target_path": "/inference"},
 ]
 CHUTE_TAGLINE = "elbios/higgs-whisper (Boson Higgs Audio + Whisper.cpp)"
-CHUTE_README = "Wrapper image that ships the latest elbios/higgs-whisper for deployment on Chutes."
 CHUTE_DOC = """
 ### Higgs Audio Wrapper
 
@@ -80,6 +79,7 @@ image = (
         tag=CHUTE_TAG,
         base_image=CHUTE_BASE_IMAGE,
         python_version=CHUTE_PYTHON_VERSION,
+        readme=CHUTE_DOC,
         env=CHUTE_ENV,
     )
     .add(source="tools", dest="/app/tools")

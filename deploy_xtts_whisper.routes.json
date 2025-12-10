@@ -5,119 +5,306 @@
       "method": "GET",
       "port": 8020,
       "target_path": "/speakers_list",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/speakers_list",
+      "cord": {
+        "path": "/speakers_list",
+        "public_api_path": "/speakers_list",
+        "public_api_method": "GET",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/speakers_list",
+        "stream": false,
+        "function_name": "cord_/speakers_list"
+      }
     },
     {
       "path": "/speakers",
       "method": "GET",
       "port": 8020,
       "target_path": "/speakers",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/speakers",
+      "cord": {
+        "path": "/speakers",
+        "public_api_path": "/speakers",
+        "public_api_method": "GET",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/speakers",
+        "stream": false,
+        "function_name": "cord_/speakers"
+      }
     },
     {
       "path": "/languages",
       "method": "GET",
       "port": 8020,
       "target_path": "/languages",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/languages",
+      "cord": {
+        "path": "/languages",
+        "public_api_path": "/languages",
+        "public_api_method": "GET",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/languages",
+        "stream": false,
+        "function_name": "cord_/languages"
+      }
     },
     {
       "path": "/get_folders",
       "method": "GET",
       "port": 8020,
       "target_path": "/get_folders",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/get_folders",
+      "cord": {
+        "path": "/get_folders",
+        "public_api_path": "/get_folders",
+        "public_api_method": "GET",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/get_folders",
+        "stream": false,
+        "function_name": "cord_/get_folders"
+      }
     },
     {
       "path": "/get_models_list",
       "method": "GET",
       "port": 8020,
       "target_path": "/get_models_list",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/get_models_list",
+      "cord": {
+        "path": "/get_models_list",
+        "public_api_path": "/get_models_list",
+        "public_api_method": "GET",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/get_models_list",
+        "stream": false,
+        "function_name": "cord_/get_models_list"
+      }
     },
     {
       "path": "/get_tts_settings",
       "method": "GET",
       "port": 8020,
       "target_path": "/get_tts_settings",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/get_tts_settings",
+      "cord": {
+        "path": "/get_tts_settings",
+        "public_api_path": "/get_tts_settings",
+        "public_api_method": "GET",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/get_tts_settings",
+        "stream": false,
+        "function_name": "cord_/get_tts_settings"
+      }
     },
     {
       "path": "/sample/{file_name}",
       "method": "GET",
       "port": 8020,
       "target_path": "/sample/{file_name}",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/sample/{file_name}",
+      "cord": {
+        "path": "/sample/{file_name}",
+        "public_api_path": "/sample/{file_name}",
+        "public_api_method": "GET",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/sample/{file_name}",
+        "stream": false,
+        "function_name": "cord_/sample/{file_name}"
+      }
     },
     {
       "path": "/set_output",
       "method": "POST",
       "port": 8020,
       "target_path": "/set_output",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/set_output",
+      "cord": {
+        "path": "/set_output",
+        "public_api_path": "/set_output",
+        "public_api_method": "POST",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/set_output",
+        "stream": false,
+        "function_name": "cord_/set_output"
+      }
     },
     {
       "path": "/set_speaker_folder",
       "method": "POST",
       "port": 8020,
       "target_path": "/set_speaker_folder",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/set_speaker_folder",
+      "cord": {
+        "path": "/set_speaker_folder",
+        "public_api_path": "/set_speaker_folder",
+        "public_api_method": "POST",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/set_speaker_folder",
+        "stream": false,
+        "function_name": "cord_/set_speaker_folder"
+      }
     },
     {
       "path": "/switch_model",
       "method": "POST",
       "port": 8020,
       "target_path": "/switch_model",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/switch_model",
+      "cord": {
+        "path": "/switch_model",
+        "public_api_path": "/switch_model",
+        "public_api_method": "POST",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/switch_model",
+        "stream": false,
+        "function_name": "cord_/switch_model"
+      }
     },
     {
       "path": "/set_tts_settings",
       "method": "POST",
       "port": 8020,
       "target_path": "/set_tts_settings",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/set_tts_settings",
+      "cord": {
+        "path": "/set_tts_settings",
+        "public_api_path": "/set_tts_settings",
+        "public_api_method": "POST",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/set_tts_settings",
+        "stream": false,
+        "function_name": "cord_/set_tts_settings"
+      }
     },
     {
       "path": "/tts_stream",
       "method": "GET",
       "port": 8020,
       "target_path": "/tts_stream",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/tts_stream",
+      "cord": {
+        "path": "/tts_stream",
+        "public_api_path": "/tts_stream",
+        "public_api_method": "GET",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/tts_stream",
+        "stream": false,
+        "function_name": "cord_/tts_stream"
+      }
     },
     {
       "path": "/tts_to_audio/",
       "method": "POST",
       "port": 8020,
       "target_path": "/tts_to_audio/",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/tts_to_audio/",
+      "cord": {
+        "path": "/tts_to_audio/",
+        "public_api_path": "/tts_to_audio/",
+        "public_api_method": "POST",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/tts_to_audio/",
+        "stream": false,
+        "function_name": "cord_/tts_to_audio/"
+      }
     },
     {
       "path": "/tts_to_file",
       "method": "POST",
       "port": 8020,
       "target_path": "/tts_to_file",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/tts_to_file",
+      "cord": {
+        "path": "/tts_to_file",
+        "public_api_path": "/tts_to_file",
+        "public_api_method": "POST",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/tts_to_file",
+        "stream": false,
+        "function_name": "cord_/tts_to_file"
+      }
     },
     {
       "path": "/create_latents",
       "method": "POST",
       "port": 8020,
       "target_path": "/create_latents",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/create_latents",
+      "cord": {
+        "path": "/create_latents",
+        "public_api_path": "/create_latents",
+        "public_api_method": "POST",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/create_latents",
+        "stream": false,
+        "function_name": "cord_/create_latents"
+      }
     },
     {
       "path": "/store_latents",
       "method": "POST",
       "port": 8020,
       "target_path": "/store_latents",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/store_latents",
+      "cord": {
+        "path": "/store_latents",
+        "public_api_path": "/store_latents",
+        "public_api_method": "POST",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/store_latents",
+        "stream": false,
+        "function_name": "cord_/store_latents"
+      }
     },
     {
       "path": "/create_and_store_latents",
       "method": "POST",
       "port": 8020,
       "target_path": "/create_and_store_latents",
-      "stream": false
+      "stream": false,
+      "function_name": "cord_/create_and_store_latents",
+      "cord": {
+        "path": "/create_and_store_latents",
+        "public_api_path": "/create_and_store_latents",
+        "public_api_method": "POST",
+        "passthrough": true,
+        "passthrough_port": 8020,
+        "passthrough_path": "/create_and_store_latents",
+        "stream": false,
+        "function_name": "cord_/create_and_store_latents"
+      }
     }
   ],
   "source": "xtts-whisper"

@@ -27,7 +27,7 @@ ENTRYPOINT = os.getenv("CHUTE_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh"
 CHUTE_BASE_IMAGE = os.getenv("CHUTE_BASE_IMAGE", "elbios/xtts-whisper:latest")
 CHUTE_PYTHON_VERSION = os.getenv("CHUTE_PYTHON_VERSION", "3.11")
 CHUTE_NAME = "xtts-whisper"
-CHUTE_TAG = "tts-stt-v0.1.12"
+CHUTE_TAG = "tts-stt-v0.1.16"
 
 # Chute environment variables (used during discovery and runtime)
 CHUTE_ENV = {
@@ -45,12 +45,11 @@ CHUTE_ENV = {
 # XTTS routes (port 8020) are auto-discovered - see routes.json
 # https://github.com/ggml-org/whisper.cpp/tree/master/examples/server
 CHUTE_STATIC_ROUTES = [
-    {"port": 8080, "method": "GET", "path": "/load", "target_path": "/load"},
-    {"port": 8080, "method": "POST", "path": "/inference", "target_path": "/inference"},
-    {"port": 8080, "method": "POST", "path": "/v1/audio/transcriptions", "target_path": "/inference"},
+    {"port": 8080, "method": "GET", "path": "/load"},
+    {"port": 8080, "method": "POST", "path": "/inference"},
+    {"port": 8080, "method": "POST", "path": "/v1/audio/transcriptions"},
 ]
 CHUTE_TAGLINE = "elbios/xtts-whisper (XTTS + Whisper.cpp)"
-CHUTE_README = "Wrapper image that ships the latest elbios/xtts-whisper for deployment on Chutes."
 CHUTE_DOC = """
 ### XTTS + Whisper Wrapper
 
@@ -82,9 +81,11 @@ image = (
         tag=CHUTE_TAG,
         base_image=CHUTE_BASE_IMAGE,
         python_version=CHUTE_PYTHON_VERSION,
+        readme=CHUTE_DOC,
         env=CHUTE_ENV,
     )
     .add(source="tools", dest="/app/tools")
+    .add(source="deploy_xtts_whisper.routes.json", dest="/app/deploy_xtts_whisper.routes.json")
 )
 
 chute = Chute(
@@ -102,7 +103,7 @@ chute = Chute(
 register_passthrough_routes(chute, load_route_manifest(static_routes=CHUTE_STATIC_ROUTES), DEFAULT_SERVICE_PORT)
 
 # Start the wrapped services (XTTS + Whisper) - base image entrypoint is overridden by chutes run
-register_service_launcher(chute, ENTRYPOINT, SERVICE_PORTS)
+register_service_launcher(chute, ENTRYPOINT, SERVICE_PORTS, timeout=120, soft_fail=True)
 
 
 # =============================================================================

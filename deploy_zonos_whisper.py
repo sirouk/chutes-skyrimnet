@@ -50,7 +50,6 @@ CHUTE_STATIC_ROUTES = [
     {"port": 8080, "method": "POST", "path": "/load", "target_path": "/load"},
 ]
 CHUTE_TAGLINE = "elbios/zonos-whisper (Zyphra Zonos + Whisper.cpp)"
-CHUTE_README = "Wrapper image that ships the latest elbios/zonos-whisper for deployment on Chutes."
 CHUTE_DOC = """
 ### Zonos Wrapper
 
@@ -81,6 +80,7 @@ image = (
         tag=CHUTE_TAG,
         base_image=CHUTE_BASE_IMAGE,
         python_version=CHUTE_PYTHON_VERSION,
+        readme=CHUTE_DOC,
         env=CHUTE_ENV,
     )
     .add(source="tools", dest="/app/tools")

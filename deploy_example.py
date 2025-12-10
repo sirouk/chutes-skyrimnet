@@ -103,6 +103,7 @@ image = (
         tag=CHUTE_TAG,
         base_image=CHUTE_BASE_IMAGE,
         python_version=CHUTE_PYTHON_VERSION,
+        readme=CHUTE_DOC,
         env=CHUTE_ENV,
     )
     .add(source="tools", dest="/app/tools")

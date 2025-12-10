@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+from textwrap import dedent
 from typing import Iterable
 
 from loguru import logger
@@ -10,30 +11,314 @@ from chutes.image import Image
 LOCAL_HOST = "127.0.0.1"
 
 # OS-specific package lists for build tools and dependencies
-APT_PACKAGES = " ".join([
-    "libclblast-dev", "clinfo", "ocl-icd-libopencl1", "opencl-headers", "ocl-icd-opencl-dev",
-    "libudev-dev", "libopenmpi-dev", "cmake", "automake", "pkg-config",
-    "gcc", "g++", "vim", "git", "git-lfs", "openssh-server", "curl", "wget", "jq",
-])
+APT_PACKAGES = " ".join(
+    [
+        "libclblast-dev",
+        "clinfo",
+        "ocl-icd-libopencl1",
+        "opencl-headers",
+        "ocl-icd-opencl-dev",
+        "libudev-dev",
+        "libopenmpi-dev",
+        "cmake",
+        "automake",
+        "pkg-config",
+        "gcc",
+        "g++",
+        "vim",
+        "git",
+        "git-lfs",
+        "openssh-server",
+        "curl",
+        "wget",
+        "jq",
+    ]
+)
 
-APK_PACKAGES = " ".join([
-    "clinfo", "opencl-headers", "cmake", "automake", "pkgconf",
-    "gcc", "g++", "musl-dev", "vim", "git", "git-lfs", "openssh", "curl", "wget", "jq",
-])
+APK_PACKAGES = " ".join(
+    [
+        "clinfo",
+        "opencl-headers",
+        "cmake",
+        "automake",
+        "pkgconf",
+        "gcc",
+        "g++",
+        "musl-dev",
+        "vim",
+        "git",
+        "git-lfs",
+        "openssh",
+        "curl",
+        "wget",
+        "jq",
+    ]
+)
 
-DNF_PACKAGES = " ".join([
-    "clinfo", "opencl-headers", "cmake", "automake", "pkgconfig",
-    "gcc", "gcc-c++", "vim", "git", "git-lfs", "openssh-server", "curl", "wget", "jq",
-])
+DNF_PACKAGES = " ".join(
+    [
+        "clinfo",
+        "opencl-headers",
+        "cmake",
+        "automake",
+        "pkgconfig",
+        "gcc",
+        "gcc-c++",
+        "vim",
+        "git",
+        "git-lfs",
+        "openssh-server",
+        "curl",
+        "wget",
+        "jq",
+    ]
+)
+
+
+def _script(block: str) -> str:
+    """Normalize heredoc-style shell snippets for readability."""
+    return dedent(block).strip()
+
 
 # OS-agnostic package install command
-INSTALL_PACKAGES_CMD = (
-    f"if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get -y install {APT_PACKAGES}; "
-    f"elif command -v apk >/dev/null 2>&1; then apk add --no-cache {APK_PACKAGES}; "
-    f"elif command -v dnf >/dev/null 2>&1; then dnf install -y {DNF_PACKAGES}; "
-    f"elif command -v yum >/dev/null 2>&1; then yum install -y {DNF_PACKAGES}; "
-    "else echo 'WARN: No supported package manager for build tools'; fi"
+INSTALL_PACKAGES_CMD = _script(
+    f"""
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update && apt-get -y install {APT_PACKAGES}
+    elif command -v apk >/dev/null 2>&1; then
+        apk add --no-cache {APK_PACKAGES}
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y {DNF_PACKAGES}
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y {DNF_PACKAGES}
+    else
+        echo 'WARN: No supported package manager for build tools'
+    fi
+    """
 )
+
+
+def _install_system_python_script(py_ver_fallback: str) -> str:
+    """Return the shell script that installs system Python on the image."""
+    return _script(
+        f"""
+        PY_VER=$(python3 -c 'import sys;print(".".join(map(str, sys.version_info[:2])))' 2>/dev/null || echo '{py_ver_fallback}')
+        echo "Detected Python version: $PY_VER"
+
+        if [ -x /usr/bin/python3 ] && ! readlink -f /usr/bin/python3 2>/dev/null | grep -qiE 'conda|mamba'; then
+            echo 'System Python available, skipping install'
+            ln -sf /usr/bin/python3 /usr/local/bin/python
+            ln -sf /usr/bin/python3 /usr/local/bin/python3
+        else
+            echo 'Freezing existing packages...'
+            python3 -m pip freeze 2>/dev/null > /tmp/frozen_pkgs.txt || true
+
+            echo "Installing system Python $PY_VER..."
+            if command -v apt-get >/dev/null 2>&1; then
+                apt-get update
+                if apt-get -y install python${{PY_VER}} python${{PY_VER}}-venv python${{PY_VER}}-dev python3-pip 2>/dev/null; then
+                    ln -sf /usr/bin/python${{PY_VER}} /usr/local/bin/python
+                    ln -sf /usr/bin/python${{PY_VER}} /usr/local/bin/python3
+                else
+                    echo 'Specific version unavailable, using default python3'
+                    apt-get -y install python3 python3-venv python3-dev python3-pip
+                    ln -sf /usr/bin/python3 /usr/local/bin/python
+                    ln -sf /usr/bin/python3 /usr/local/bin/python3
+                fi
+                rm -f /usr/lib/python3*/EXTERNALLY-MANAGED
+            elif command -v apk >/dev/null 2>&1; then
+                apk add --no-cache python3 python3-dev py3-pip
+                ln -sf /usr/bin/python3 /usr/local/bin/python
+                ln -sf /usr/bin/python3 /usr/local/bin/python3
+            elif command -v dnf >/dev/null 2>&1; then
+                if dnf install -y python${{PY_VER}} python${{PY_VER}}-devel python3-pip 2>/dev/null; then
+                    ln -sf /usr/bin/python${{PY_VER}} /usr/local/bin/python
+                    ln -sf /usr/bin/python${{PY_VER}} /usr/local/bin/python3
+                else
+                    echo 'Specific version unavailable, using default python3'
+                    dnf install -y python3 python3-devel python3-pip
+                    ln -sf /usr/bin/python3 /usr/local/bin/python
+                    ln -sf /usr/bin/python3 /usr/local/bin/python3
+                fi
+            elif command -v yum >/dev/null 2>&1; then
+                yum install -y python3 python3-devel python3-pip
+                ln -sf /usr/bin/python3 /usr/local/bin/python
+                ln -sf /usr/bin/python3 /usr/local/bin/python3
+            else
+                echo 'ERROR: No supported package manager found (apt/apk/dnf/yum)'
+                exit 1
+            fi
+
+            echo "Verifying: $(/usr/local/bin/python --version)"
+
+            if [ -s /tmp/frozen_pkgs.txt ]; then
+                echo 'Reinstalling packages...'
+                /usr/local/bin/python -m pip install --upgrade pip
+                /usr/local/bin/python -m pip install -r /tmp/frozen_pkgs.txt --ignore-installed --no-deps 2>/dev/null || echo 'Some packages failed (expected for conda-only packages)'
+            fi
+        fi
+        """
+    )
+
+
+def _link_external_packages_script() -> str:
+    """Generate the python helper that links site-packages from Conda-style installs."""
+    return _script(
+        """
+        python - <<'PY'
+        import os
+        import pathlib
+        import site
+        import sys
+
+        pyver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+        print(f"Linking fallback packages for {pyver}...")
+
+        bases = [
+            os.environ.get("CONDA_PREFIX", ""),
+            "/opt/conda",
+            "/opt/mamba",
+            "/root/miniconda3",
+            "/root/anaconda3",
+        ]
+
+        candidates: list[str] = []
+        seen: set[str] = set()
+        for base in bases:
+            if not base:
+                continue
+            candidate = pathlib.Path(base) / "lib" / pyver / "site-packages"
+            if candidate.is_dir():
+                resolved = str(candidate.resolve())
+                if resolved not in seen:
+                    seen.add(resolved)
+                    candidates.append(resolved)
+
+        target = pathlib.Path(site.getsitepackages()[0]) / "chutes_compat.pth"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if candidates:
+            target.write_text("\\n".join(candidates) + "\\n")
+            print(f"Fallback paths: {candidates}")
+        else:
+            print("No fallback paths found")
+        PY
+        """
+    )
+
+
+def _create_app_pth_script() -> str:
+    """Generate the python helper that records app directories for import discovery."""
+    return _script(
+        """
+        python - <<'PY'
+        import os
+        import pathlib
+        import site
+
+        hints = [
+            pathlib.Path(p)
+            for p in os.getenv("CHUTES_PYTHONPATH_HINTS", "/app:/workspace:/srv").split(":")
+            if p
+        ]
+        hints.append(pathlib.Path.cwd())
+
+        paths: list[str] = []
+        seen: set[str] = set()
+
+        def add_candidate(candidate: pathlib.Path) -> None:
+            if not candidate.is_dir():
+                return
+            resolved = str(candidate.resolve())
+            if resolved not in seen:
+                seen.add(resolved)
+                paths.append(resolved)
+
+        def looks_like_pkg(folder: pathlib.Path) -> bool:
+            if not folder.is_dir():
+                return False
+            markers = ["__init__.py", "setup.py", "pyproject.toml", "setup.cfg"]
+            return any((folder / marker).exists() for marker in markers) or any(folder.glob("*.py"))
+
+        for base in hints:
+            if not base.exists():
+                continue
+            add_candidate(base)
+            for child in base.iterdir():
+                if looks_like_pkg(child):
+                    add_candidate(child)
+
+        target = pathlib.Path(site.getsitepackages()[0]) / "chutes_app_path.pth"
+        if paths:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("\\n".join(paths) + "\\n")
+            print(f"App paths: {paths}")
+        else:
+            print("No app paths found")
+        PY
+        """
+    )
+
+
+def _system_upgrade_script() -> str:
+    """Return an OS-aware upgrade sequence."""
+    return _script(
+        """
+        if command -v apt-get >/dev/null 2>&1; then
+            apt-get update && apt-get -y upgrade && apt-get autoclean -y && apt-get -y autoremove
+        elif command -v apk >/dev/null 2>&1; then
+            apk update && apk upgrade
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf upgrade -y
+        elif command -v yum >/dev/null 2>&1; then
+            yum upgrade -y
+        fi
+        """
+    )
+
+
+def _create_chutes_user_script() -> str:
+    """Create the unprivileged runtime user and ensure writable dirs."""
+    return _script(
+        """
+        (
+            id chutes 2>/dev/null ||
+            (command -v useradd >/dev/null && useradd -m chutes) ||
+            (command -v adduser >/dev/null && adduser -D chutes)
+        ) &&
+        (command -v usermod >/dev/null && usermod -s /bin/bash chutes || true) &&
+        mkdir -p /home/chutes /app /cache &&
+        chown -R chutes:chutes /home/chutes /app /cache /var/log &&
+        (
+            command -v usermod >/dev/null && usermod -aG root chutes ||
+            (command -v adduser >/dev/null && adduser chutes root 2>/dev/null || true)
+        ) &&
+        chmod a+rwx /opt /opt/* 2>/dev/null || true &&
+        for d in \
+            /usr/local/bin /usr/local/lib /usr/local/share /usr/local/include \
+            /usr/local/share/man /usr/local/share/doc \
+            /opt/conda/bin /opt/conda/lib; do
+            mkdir -p "$d" 2>/dev/null && chmod a+rwx "$d" 2>/dev/null
+        done &&
+        for d in \
+            /usr/local/lib/python*/site-packages /usr/local/lib/python*/dist-packages \
+            /usr/lib/python*/site-packages /usr/lib/python*/dist-packages \
+            /opt/conda/lib/python*/site-packages; do
+            mkdir -p "$d" 2>/dev/null && chmod a+rwx "$d" 2>/dev/null
+        done || true
+        """
+    )
+
+
+def _bootstrap_pip_script() -> str:
+    """Upgrade pip and install wrappers that point to system python."""
+    return _script(
+        r"""
+        /usr/local/bin/python -m pip install --upgrade pip &&
+        printf '#!/bin/sh\nexec /usr/local/bin/python -m pip "$@"\n' > /usr/local/bin/pip &&
+        chmod +x /usr/local/bin/pip &&
+        cp /usr/local/bin/pip /usr/local/bin/pip3
+        """
+    )
 
 
 def parse_service_ports(env_value: str | None = None, default_ports: str = "8020,8080") -> list[int]:
@@ -50,6 +335,7 @@ def build_wrapper_image(
     tag: str,
     base_image: str,
     python_version: str = "3.10",
+    readme: str | None = None,
     env: dict[str, str] | None = None,
 ) -> Image:
     """
@@ -63,114 +349,16 @@ def build_wrapper_image(
     """
     py_ver_fallback = python_version  # e.g. "3.10" - fallback if detection fails
 
-    # Install system Python if needed (conda/mamba Python segfaults with chutes-inspecto.so)
-    # Strategy: detect version from base, freeze packages, install system Python, reinstall packages
-    # Supports: apt (Debian/Ubuntu), apk (Alpine), dnf (Fedora/RHEL8+), yum (RHEL7/CentOS)
-    install_system_python_cmd = (
-        # Detect Python version from base image (conda/mamba/pyenv/whatever)
-        f"PY_VER=$(python3 -c 'import sys;print(f\"{{sys.version_info.major}}.{{sys.version_info.minor}}\")' 2>/dev/null || echo '{py_ver_fallback}'); "
-        "echo \"Detected Python version: $PY_VER\"; "
-        
-        # Check if system Python already exists and isn't conda/mamba
-        "if [ -x /usr/bin/python3 ] && ! readlink -f /usr/bin/python3 2>/dev/null | grep -qiE 'conda|mamba'; then "
-        "echo 'System Python available, skipping install' && "
-        "ln -sf /usr/bin/python3 /usr/local/bin/python && "
-        "ln -sf /usr/bin/python3 /usr/local/bin/python3; "
-        "else "
-        
-        # Freeze existing packages before replacing Python
-        "echo 'Freezing existing packages...' && "
-        "python3 -m pip freeze 2>/dev/null > /tmp/frozen_pkgs.txt || true && "
-        
-        # OS-specific Python install (with fallback to python3 if specific version unavailable)
-        "echo \"Installing system Python $PY_VER...\" && "
-        "if command -v apt-get >/dev/null 2>&1; then "
-        # Debian/Ubuntu - try specific version, fallback to python3
-        "apt-get update && "
-        "(apt-get -y install python${PY_VER} python${PY_VER}-venv python${PY_VER}-dev python3-pip 2>/dev/null && "
-        "ln -sf /usr/bin/python${PY_VER} /usr/local/bin/python && "
-        "ln -sf /usr/bin/python${PY_VER} /usr/local/bin/python3 || "
-        "(echo 'Specific version unavailable, using default python3' && "
-        "apt-get -y install python3 python3-venv python3-dev python3-pip && "
-        "ln -sf /usr/bin/python3 /usr/local/bin/python && "
-        "ln -sf /usr/bin/python3 /usr/local/bin/python3)) && "
-        "rm -f /usr/lib/python3*/EXTERNALLY-MANAGED; "
-        "elif command -v apk >/dev/null 2>&1; then "
-        # Alpine - only has default python3
-        "apk add --no-cache python3 python3-dev py3-pip && "
-        "ln -sf /usr/bin/python3 /usr/local/bin/python && "
-        "ln -sf /usr/bin/python3 /usr/local/bin/python3; "
-        "elif command -v dnf >/dev/null 2>&1; then "
-        # Fedora/RHEL 8+ - try specific version, fallback to python3
-        "(dnf install -y python${PY_VER} python${PY_VER}-devel python3-pip 2>/dev/null && "
-        "ln -sf /usr/bin/python${PY_VER} /usr/local/bin/python && "
-        "ln -sf /usr/bin/python${PY_VER} /usr/local/bin/python3 || "
-        "(echo 'Specific version unavailable, using default python3' && "
-        "dnf install -y python3 python3-devel python3-pip && "
-        "ln -sf /usr/bin/python3 /usr/local/bin/python && "
-        "ln -sf /usr/bin/python3 /usr/local/bin/python3)); "
-        "elif command -v yum >/dev/null 2>&1; then "
-        # RHEL 7/CentOS - usually only has python3
-        "yum install -y python3 python3-devel python3-pip && "
-        "ln -sf /usr/bin/python3 /usr/local/bin/python && "
-        "ln -sf /usr/bin/python3 /usr/local/bin/python3; "
-        "else "
-        "echo 'ERROR: No supported package manager found (apt/apk/dnf/yum)' && exit 1; "
-        "fi && "
-        
-        # Verify system Python is now active
-        "echo 'Verifying: '$(/usr/local/bin/python --version) && "
-        
-        # Reinstall frozen packages (best-effort, skip failures)
-        "if [ -s /tmp/frozen_pkgs.txt ]; then "
-        "echo 'Reinstalling packages...' && "
-        "/usr/local/bin/python -m pip install --upgrade pip && "
-        "/usr/local/bin/python -m pip install -r /tmp/frozen_pkgs.txt --ignore-installed --no-deps 2>/dev/null || "
-        "echo 'Some packages failed (expected for conda-only packages)'; "
-        "fi; "
-        "fi"
-    )
-
-    # Link external site-packages as fallback (for pure-Python packages that pip missed)
-    # Note: Only same-version packages will work; C extensions need matching Python version
-    link_external_packages_cmd = (
-        "python -c \""
-        "import sys,os,pathlib,site;"
-        "pyver=f'python{sys.version_info.major}.{sys.version_info.minor}';"
-        "print(f'Linking fallback packages for {pyver}...');"
-        # Only link site-packages matching current Python version (mixing versions breaks imports)
-        "bases=[os.environ.get('CONDA_PREFIX',''),'/opt/conda','/opt/mamba','/root/miniconda3','/root/anaconda3'];"
-        "paths=[f'{b}/lib/{pyver}/site-packages' for b in bases if b and pathlib.Path(f'{b}/lib/{pyver}/site-packages').is_dir()];"
-        "seen=set();paths=[p for p in paths if p not in seen and not seen.add(p)];"
-        "print(f'Fallback paths: {paths}');"
-        "pth=pathlib.Path(site.getsitepackages()[0])/'chutes_compat.pth';"
-        "pth.parent.mkdir(parents=True,exist_ok=True);"
-        "pth.write_text(chr(10).join(paths)+chr(10)) if paths else None"
-        "\""
-    )
-
-    # Create .pth file to auto-discover app directories for Python imports
-    create_app_pth_cmd = (
-        "python -c \""
-        "import os,pathlib,site;"
-        "hints=[pathlib.Path(p) for p in os.getenv('CHUTES_PYTHONPATH_HINTS','/app:/workspace:/srv').split(':') if p];"
-        "hints.append(pathlib.Path.cwd());"
-        "paths,seen=[],set();"
-        "add=lambda p:(p.is_dir() and str(p.resolve()) not in seen and (seen.add(str(p.resolve())) or paths.append(str(p.resolve()))));"
-        "looks_like_pkg=lambda p:p.is_dir() and (any((p/m).exists() for m in ['__init__.py','setup.py','pyproject.toml','setup.cfg']) or any(p.glob('*.py')));"
-        "[add(b) or [add(c) for c in (list(b.iterdir()) if b.exists() else []) if looks_like_pkg(c)] for b in hints if b.exists()];"
-        "pth=pathlib.Path(site.getsitepackages()[0])/'chutes_app_path.pth';"
-        "pth.parent.mkdir(parents=True,exist_ok=True);"
-        "pth.write_text(chr(10).join(paths)+chr(10)) if paths else None;"
-        "print(f'App paths: {paths}') if paths else print('No app paths found')"
-        "\""
-    )
+    install_system_python_cmd = _install_system_python_script(py_ver_fallback)
+    link_external_packages_cmd = _link_external_packages_script()
+    create_app_pth_cmd = _create_app_pth_script()
 
     image = (
         Image(
             username=username,
             name=name,
             tag=tag,
+            readme=readme or "",
         )
         .from_base(base_image)
     )
@@ -187,46 +375,18 @@ def build_wrapper_image(
         # Install system Python (works with chutes-inspecto.so, unlike Conda Python)
         .run_command(install_system_python_cmd)
         # OS-agnostic system upgrade
-        .run_command(
-            "if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get -y upgrade && apt-get autoclean -y && apt-get -y autoremove; "
-            "elif command -v apk >/dev/null 2>&1; then apk update && apk upgrade; "
-            "elif command -v dnf >/dev/null 2>&1; then dnf upgrade -y; "
-            "elif command -v yum >/dev/null 2>&1; then yum upgrade -y; fi"
-        )
+        .run_command(_system_upgrade_script())
         # OS-agnostic package install
         .run_command(INSTALL_PACKAGES_CMD)
         .run_command("mkdir -p /etc/OpenCL/vendors/ && echo 'libnvidia-opencl.so.1' > /etc/OpenCL/vendors/nvidia.icd")
         # Create chutes user (OS-agnostic) with generic /cache dir
         # NOTE: No sudo - miners run these images for external clients, must limit privileges
         # Deploy scripts should set HF_HOME, TORCH_HOME, etc. to /cache subdirs via .with_env()
-        .run_command(
-            "(id chutes 2>/dev/null || (command -v useradd >/dev/null && useradd -m chutes) || (command -v adduser >/dev/null && adduser -D chutes)) && "
-            "(command -v usermod >/dev/null && usermod -s /bin/bash chutes || true) && "
-            "mkdir -p /home/chutes /app /cache && "
-            "chown -R chutes:chutes /home/chutes /app /cache /var/log && "
-            "(command -v usermod >/dev/null && usermod -aG root chutes || (command -v adduser >/dev/null && adduser chutes root 2>/dev/null || true)) && "
-            # Make install directories writable for chutes user (pip/uv package installs)
-            # Strategy: chmod parent dirs so subdirs can be created, then create common leaf dirs
-            # /opt and /opt/* allows creating/writing in app dirs (non-recursive, fast)
-            "chmod a+rwx /opt /opt/* 2>/dev/null || true && "
-            # Parent dirs (must be writable to create children)
-            "for d in /usr/local/bin /usr/local/lib /usr/local/share /usr/local/include "
-            "/usr/local/share/man /usr/local/share/doc "
-            "/opt/conda/bin /opt/conda/lib; do "
-            "mkdir -p \"$d\" 2>/dev/null && chmod a+rwx \"$d\" 2>/dev/null; done && "
-            # Python package dirs: site-packages (most distros) + dist-packages (Debian/Ubuntu)
-            "for d in /usr/local/lib/python*/site-packages /usr/local/lib/python*/dist-packages "
-            "/usr/lib/python*/site-packages /usr/lib/python*/dist-packages "
-            "/opt/conda/lib/python*/site-packages; do "
-            "mkdir -p \"$d\" 2>/dev/null && chmod a+rwx \"$d\" 2>/dev/null; done || true"
-        )
+        .run_command(_create_chutes_user_script())
         .run_command(
             # Upgrade pip and create wrapper scripts that use system Python
             # Use /bin/sh for Alpine compatibility (no bash by default)
-            "/usr/local/bin/python -m pip install --upgrade pip && "
-            "printf '#!/bin/sh\\nexec /usr/local/bin/python -m pip \"$@\"\\n' > /usr/local/bin/pip && "
-            "chmod +x /usr/local/bin/pip && "
-            "cp /usr/local/bin/pip /usr/local/bin/pip3"
+            _bootstrap_pip_script()
         )
         .run_command("mkdir -p /root/.cache && chown -R chutes:chutes /root")
         .set_user("chutes")
@@ -361,19 +521,27 @@ def _should_skip_route(path: str) -> str | None:
     return None
 
 
-async def wait_for_services(ports: Iterable[int], host: str = LOCAL_HOST, timeout: int = 600) -> None:
-    for port in ports:
-        await _wait_for_port(port, host=host, timeout=timeout)
-
-
-async def probe_services(ports: Iterable[int], host: str = LOCAL_HOST, timeout: int = 5) -> list[str]:
+async def wait_for_services(
+    ports: Iterable[int],
+    host: str = LOCAL_HOST,
+    timeout: int = 120,
+    *,
+    soft_fail: bool = False,
+) -> list[str]:
     errors: list[str] = []
     for port in ports:
         try:
             await _wait_for_port(port, host=host, timeout=timeout)
         except Exception as exc:
-            errors.append(f"Port {port}: {exc}")
+            if soft_fail:
+                errors.append(f"{host}:{port} {exc}")
+            else:
+                raise
     return errors
+
+
+async def probe_services(ports: Iterable[int], host: str = LOCAL_HOST, timeout: int = 5) -> list[str]:
+    return await wait_for_services(ports, host=host, timeout=timeout, soft_fail=True)
 
 
 def register_health_check(chute, ports: list[int], host: str = LOCAL_HOST) -> None:
@@ -403,6 +571,7 @@ def register_service_launcher(
     ports: list[int],
     host: str = LOCAL_HOST,
     timeout: int = 600,
+    soft_fail: bool = True,
     env: dict[str, str] | None = None,
 ) -> None:
     """
@@ -462,8 +631,11 @@ def register_service_launcher(
         
         # Wait for all ports to be ready
         logger.info(f"Waiting for service ports: {ports}")
-        await wait_for_services(ports, host=host, timeout=timeout)
-        logger.success(f"All service ports ready: {ports}")
+        errors = await wait_for_services(ports, host=host, timeout=timeout, soft_fail=soft_fail)
+        if errors:
+            logger.warning(f"Service ports not ready (continuing anyway): {errors}")
+        else:
+            logger.success(f"All service ports ready: {ports}")
 
 
 def _parse_routes_json(raw: str) -> list[dict]:
@@ -479,30 +651,38 @@ def _parse_routes_json(raw: str) -> list[dict]:
 
 
 def _register_single_route(chute, route: dict, idx: int, default_port: int) -> None:
-    path = route["path"]
+    public_path = route.get("public_api_path") or route.get("path", "")
     method = route.get("method", "GET").upper()
-    passthrough_path = route.get("target_path", path)
-    passthrough_port = int(route.get("port", default_port))
+    passthrough_path = route.get("passthrough_path") or route.get("target_path", public_path)
+    passthrough_port = int(route.get("passthrough_port") or route.get("port", default_port))
     stream = bool(route.get("stream", False))
+    cord_meta = route.get("cord") or {}
 
-    internal_path = f"{method.lower()}_{_sanitize_route_name(path)}_{idx}"
-    # Use an internal path for uniqueness (handles same public path with different methods),
-    # while exposing the real public_api_path/method outward.
+    internal_path = cord_meta.get("path") or route.get("internal_path") or public_path
+    # Default to public path to avoid exposing numbered internal paths externally.
+
+    function_name = (
+        route.get("function_name")
+        or cord_meta.get("function_name")
+        or f"cord_{internal_path}"
+    )
+
     decorator = chute.cord(
         path=internal_path,
-        public_api_path=path,
-        public_api_method=method,
-        passthrough=True,
-        passthrough_port=passthrough_port,
-        passthrough_path=passthrough_path,
-        stream=stream,
+        public_api_path=cord_meta.get("public_api_path", public_path),
+        public_api_method=cord_meta.get("public_api_method", method),
+        method=cord_meta.get("method", method),
+        passthrough=cord_meta.get("passthrough", True),
+        passthrough_port=int(cord_meta.get("passthrough_port", passthrough_port)),
+        passthrough_path=cord_meta.get("passthrough_path", passthrough_path),
+        stream=cord_meta.get("stream", stream),
     )
 
     async def _route_handler(self, *_args, **_kwargs):
         """Auto-generated passthrough cord."""
         pass
 
-    _route_handler.__name__ = f"cord_{internal_path}"
+    _route_handler.__name__ = function_name
     decorator(_route_handler)
 
 
