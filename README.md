@@ -19,17 +19,22 @@ source .venv/bin/activate
 
 ## Architecture & Methodology
 
-**Strategy:** We deploy SkyrimNet services by "wrapping" the upstream Docker images (`elbios/*`) rather than rebuilding them from scratch. This ensures 1:1 compatibility with the reference implementation while adding the necessary Chutes runtime layer.
+**Strategy:** Keep the upstream SkyrimNet images intact and inject the Chutes runtime so the exact binaries and model stacks keep running. Only fall back to replaying the Docker history onto the `parachutes/python` base (the `deploy_*_auto.py` path) when you explicitly need a fresh, auditable foundation. Even Conda-based or CUDA-heavy vendor images should be wrapped as-is so their behavior stays 1:1 with the reference builds.
 
 ### Tooling
-We developed custom tooling to automate this process:
-- **Auto-Discovery (`deploy.sh --discover`):** Boots the upstream image locally, probes for OpenAPI/Swagger endpoints, and automatically generates a route manifest (`.routes.json`) containing all ports, paths, and methods.
-- **Wrapper SDK (`tools/chute_wrappers.py`):** Prepares the image for when the Chutes runtime is injected into the base image, and helps to configure cords with discovered routes.
+We ship the same tooling as `chutes-jumpmaster`, pre-configured for the SkyrimNet assets:
+- **Auto-Discovery (`deploy.sh --discover` / `tools/discover_routes.py`):** Boots the upstream image locally, probes OpenAPI/Swagger endpoints, and writes `deploy_*.routes.json`. Run this first so cords match what the service actually exposes.
+- **Wrapper SDK (`tools/chute_wrappers.py`):** Injects system Python, the `chutes` user, OpenCL libs, and helper scripts into any base image. Handles route registration, startup waits, and health checks while letting the original container keep its own entrypoint.
+- **Image Generator (`tools/create_chute_from_image.py`):** Replays an existing Docker image’s metadata onto the Chutes base image (`deploy_*_auto.py`) when you truly need a rebuilt, Python-first variant.
+
+### Typical Paths
+1. **Auto-Discovery + Wrapper (default).** Discover routes, then call `build_wrapper_image()` so the upstream container inherits the Chutes runtime with zero functional drift.
+2. **Image Generator (metadata replay).** Use `tools/create_chute_from_image.py` to rebuild the Dockerfile on `parachutes/python` while preserving the upstream entrypoint—handy for auditing or when Conda layers need to be recreated deterministically.
+3. **Vanilla chutes (pure Python).** If you want to author a chute from scratch, start in `chutes-jumpmaster/vanilla_examples/` and copy the pattern back here once the service is stable.
 
 ### Platform Context
-Chutes runs persistent, GPU-accelerated containers (like AWS Lambda but stateful).
-- **Multipart Limitation:** The Chutes router currently requires JSON payloads for request routing and validation. Legacy `multipart/form-data` requests (used by standard `xtts`/`whisper.cpp` clients) are not supported directly.
-- **Workaround:** Clients must wrap binary data (like audio) in a JSON payload (e.g., base64 encoded strings) to pass through the Chutes router. The images providing TTS/STT services must be modified to support this.
+Chutes behaves like a less restrictive, GPU-aware AWS Lambda. Containers stay warm, keep caches, and expose arbitrary HTTP routes. The router expects JSON payloads today, so XTTS/Whisper workflows must wrap audio bytes (base64) or add a thin proxy that converts legacy `multipart/form-data` into JSON.
+- **Future direction:** Images can also emit JSON-wrapped audio, which unlocks multipart-style flows without waiting on router changes.
 
 ---
 
@@ -57,18 +62,24 @@ Interactive wizard that:
 
 ### 2. Deploy (`./deploy.sh`)
 
-Interactive menu for all lifecycle tasks. Key options:
+Interactive menu for all lifecycle tasks. Press Enter to accept defaults.
 
 | Option | Description |
 |--------|-------------|
-| **3. Create from image** | Generates a new `deploy_*.py` from *any* Docker image. |
-| **4. Build chute** | Builds the wrapper image. Supports `--local` or remote builds. |
-| **5. Run in Docker** | Run the wrapped image locally with GPU (verifies wrapping). |
-| **7. Deploy chute** | Deploys the built image to Chutes.ai nodes. |
-| **9. Chute status** | Get status of a deployed chute. |
-| **10. Instance logs** | View logs for a chute instance. |
-| **11. Delete chute** | Remove a deployed chute. |
-| **12. Delete image** | Remove a built image. |
+| **1** Account info | Show username + wallet details from `~/.chutes/config.ini`. |
+| **2** List images | Display wrapper images already built. |
+| **3** List chutes | Show deployed chutes tied to your account. |
+| **4** Build chute from `deploy_*.py` | Wraps `CHUTE_BASE_IMAGE` using the module config. |
+| **5** Create `deploy_*_auto.py` | Replays an upstream image onto the Chutes base image. |
+| **6** Run in Docker | GPU sanity test of the wrapped container. |
+| **7** Run dev mode | Executes the module locally for pure-Python chutes. |
+| **8** Deploy chute | Builds (if needed) and schedules on Chutes.ai. |
+| **9** Warmup once | Ping the chute so it spins up before traffic. |
+| **10** Keep warm loop | Repeated warmups to keep VRAM allocated. |
+| **11** Chute status | Calls `chutes chutes get` for live info. |
+| **12** Instance logs | Streams logs from active instances. |
+| **13** Delete chute | Interactively delete with safety checks. |
+| **14** Delete image | Remove local/remote wrapper images. |
 
 **Command Line Usage:**
 ```bash
@@ -89,6 +100,8 @@ This tool (`tools/discover_routes.py`) will:
 2.  Spider common docs paths (`/openapi.json`, `/docs`, etc.).
 3.  Extract all paths and methods.
 4.  Write a manifest that `chute_wrappers.py` uses to register cords automatically.
+
+If no manifest exists when you choose “Build chute,” the prompt now defaults to **Yes** so discovery runs before the build.
 
 ---
 
