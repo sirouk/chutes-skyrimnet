@@ -15,7 +15,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Iterable, List
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -127,8 +127,8 @@ def main() -> None:
     parser.add_argument(
         "--startup-delay",
         type=int,
-        default=10,
-        help="Seconds to wait after starting the container before probing (default: 10)",
+        default=300,
+        help="Seconds to wait after starting the container before probing (default: 300)",
     )
     parser.add_argument(
         "--probe-timeout",
@@ -217,15 +217,23 @@ def discover_from_chute_file(
         print(f"[info] passing env vars: {[e.split('=')[0] for e in all_env]}")
     container_id = start_container(image, entrypoint, ports, docker_gpus, docker_extra_args, all_env)
     try:
-        wait_with_logs(container_id, startup_delay)
+        wait_with_logs(container_id, startup_delay, container_ports=ports)
         routes: list[dict] = []
         name_tracker: dict[str, int] = {}
         for port in ports:
             base_url = get_host_url(container_id, port)
-            try:
-                spec = fetch_spec_with_retry(base_url, probe_paths, probe_timeout)
-            except RuntimeError as exc:
-                print(f"[warn] {exc}", file=sys.stderr)
+            spec = None
+            for attempt in range(2):
+                try:
+                    spec = fetch_spec_with_retry(base_url, probe_paths, probe_timeout)
+                    break
+                except RuntimeError as exc:
+                    if attempt == 0:
+                        print(f"[warn] {exc} (attempt 1/2); waiting {probe_timeout}s before retrying", file=sys.stderr)
+                        time.sleep(probe_timeout)
+                    else:
+                        print(f"[warn] {exc}", file=sys.stderr)
+            if not spec:
                 continue
             routes.extend(extract_routes(spec, port, name_tracker=name_tracker))
         if not routes:
@@ -327,15 +335,59 @@ def fetch_spec_with_retry(base_url: str, probe_paths: Iterable[str], timeout: in
     raise RuntimeError(f"Unable to fetch OpenAPI spec from {base_url}")
 
 
-def wait_with_logs(container_id: str, duration: int, interval: int = 15, tail_lines: int = 5) -> None:
+def wait_with_logs(
+    container_id: str,
+    duration: int,
+    interval: int = 15,
+    tail_lines: int = 5,
+    container_ports: list[int] | None = None,
+) -> None:
+    bindings = None
+    if container_ports:
+        bindings = _resolve_port_bindings(container_id, container_ports)
     deadline = time.time() + duration
+    readiness_logged = False
     while True:
         remaining = int(deadline - time.time())
+        if container_ports and bindings:
+            if _any_port_ready(bindings):
+                if not readiness_logged:
+                    print("[info] detected responsive service port; continuing without waiting full startup delay")
+                    readiness_logged = True
+                break
         if remaining <= 0:
             break
         print(f"[info] waiting for services... (~{remaining}s remaining)")
         tail_container_logs(container_id, tail_lines)
+        if container_ports and bindings and _any_port_ready(bindings):
+            if not readiness_logged:
+                print("[info] detected responsive service port; continuing without waiting full startup delay")
+                readiness_logged = True
+            break
         time.sleep(min(interval, max(1, remaining)))
+
+
+def _resolve_port_bindings(container_id: str, container_ports: list[int]) -> dict[int, tuple[str, int]]:
+    bindings: dict[int, tuple[str, int]] = {}
+    for port in container_ports:
+        try:
+            url = get_host_url(container_id, port)
+            parsed = urlparse(url)
+            if parsed.hostname and parsed.port:
+                bindings[port] = (parsed.hostname, parsed.port)
+        except Exception as exc:
+            print(f"[warn] unable to resolve host port for container port {port}: {exc}")
+    return bindings
+
+
+def _any_port_ready(bindings: dict[int, tuple[str, int]], timeout: float = 1.5) -> bool:
+    for host, mapped_port in bindings.values():
+        try:
+            with socket.create_connection((host, mapped_port), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def tail_container_logs(container_id: str, lines: int) -> None:
