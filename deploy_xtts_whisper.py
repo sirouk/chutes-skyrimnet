@@ -12,22 +12,22 @@ from tools.chute_wrappers import (
 
 chutes_config = ConfigParser()
 chutes_config.read(os.path.expanduser("~/.chutes/config.ini"))
+
 USERNAME = os.getenv("CHUTES_USERNAME") or chutes_config.get("auth", "username", fallback="chutes")
-CHUTE_GPU_COUNT = int(os.getenv("CHUTE_GPU_COUNT", "1"))
-CHUTE_MIN_VRAM_GB_PER_GPU = int(os.getenv("CHUTE_MIN_VRAM_GB_PER_GPU", "16"))  # Chutes minimum; XTTS ~1.5GB + Whisper ~1.5GB
-CHUTE_SHUTDOWN_AFTER_SECONDS = int(os.getenv("CHUTE_SHUTDOWN_AFTER_SECONDS", "86400"))
-CHUTE_CONCURRENCY = int(os.getenv("CHUTE_CONCURRENCY", "6"))  # Lightweight model
 
-SERVICE_PORTS = [int(p.strip()) for p in os.getenv("CHUTE_PORTS", "8020,8080").split(",") if p.strip()]
-if not SERVICE_PORTS:
-    raise RuntimeError("CHUTE_PORTS must specify at least one port")
-DEFAULT_SERVICE_PORT = SERVICE_PORTS[0]
-ENTRYPOINT = os.getenv("CHUTE_ENTRYPOINT", "/usr/local/bin/docker-entrypoint.sh")
-
-CHUTE_BASE_IMAGE = os.getenv("CHUTE_BASE_IMAGE", "elbios/xtts-whisper:latest")
-CHUTE_PYTHON_VERSION = os.getenv("CHUTE_PYTHON_VERSION", "3.11")
+# Chute Configuration
 CHUTE_NAME = "xtts-whisper"
 CHUTE_TAG = "tts-stt-v0.1.16"
+CHUTE_BASE_IMAGE = "elbios/xtts-whisper:latest"
+CHUTE_PYTHON_VERSION = "3.11"
+CHUTE_GPU_COUNT = 1
+CHUTE_MIN_VRAM_GB_PER_GPU = 16  # Chutes minimum; XTTS ~1.5GB + Whisper ~1.5GB
+CHUTE_SHUTDOWN_AFTER_SECONDS = 86400
+CHUTE_CONCURRENCY = 6  # Lightweight model
+
+SERVICE_PORTS = [8020, 8080]
+DEFAULT_SERVICE_PORT = SERVICE_PORTS[0]
+ENTRYPOINT = "/usr/local/bin/docker-entrypoint.sh"
 
 # Chute environment variables (used during discovery and runtime)
 CHUTE_ENV = {
