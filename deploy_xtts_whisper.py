@@ -47,7 +47,7 @@ CHUTE_ENV = {
 CHUTE_STATIC_ROUTES = [
     {"port": 8080, "method": "GET", "path": "/load"},
     {"port": 8080, "method": "POST", "path": "/inference"},
-    {"port": 8080, "method": "POST", "path": "/v1/audio/transcriptions"},
+   #{"port": 8080, "method": "POST", "path": "/v1/audio/transcriptions"}, # if --inference-path is used in whisper.cpp
 ]
 CHUTE_TAGLINE = "elbios/xtts-whisper (XTTS + Whisper.cpp)"
 CHUTE_DOC = """

@@ -24,6 +24,10 @@ except ImportError:
     print("Error: Could not import discover_routes. Make sure tools/discover_routes.py exists.")
     sys.exit(1)
 
+DEFAULT_BOOTSTRAP_COMMANDS = [
+    '    .run_command("python -m pip install --no-cache-dir --upgrade pip setuptools wheel")',
+]
+
 TEMPLATE = """import os
 import subprocess
 import asyncio
@@ -42,6 +46,12 @@ chutes_config = ConfigParser()
 chutes_config.read(os.path.expanduser("~/.chutes/config.ini"))
 USERNAME = os.getenv("CHUTES_USERNAME") or chutes_config.get("auth", "username", fallback="chutes")
 CHUTE_NAME = "{chute_name}"
+CHUTE_TAG = "{tag}"
+CHUTE_BASE_IMAGE = "{source_image}"
+ENTRYPOINT = {entrypoint_literal}
+SERVICE_PORTS = {service_ports}
+DEFAULT_SERVICE_PORT = SERVICE_PORTS[0] if SERVICE_PORTS else None
+CHUTE_ENV = {chute_env}
 
 image = (
     Image(
@@ -52,7 +62,6 @@ image = (
     )
     .from_base("parachutes/python:3.12")
 {env_vars}
-    .with_env("CHUTE_ENTRYPOINT", "{entrypoint_path}")
 {build_steps}
 )
 
@@ -100,11 +109,12 @@ async def start_services(self):
 
     # TODO: Refine these commands based on the entrypoint content above
     # Attempting to run the original entrypoint script
-    cmd = ["bash", "{entrypoint_path}"]
+    target_entrypoint = ENTRYPOINT or "{entrypoint_path}"
+    cmd = ["bash", target_entrypoint]
     subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=os.environ.copy())
 
-    logger.info("Waiting for ports: {ports}")
-    await _wait_for_ports({ports})
+    logger.info("Waiting for ports: {service_ports}")
+    await _wait_for_ports(SERVICE_PORTS)
     logger.success("Services ready!")
 
 # Routes
@@ -155,6 +165,24 @@ def sanitize_run_command(cmd: str) -> str:
         _wrap_wheel,
         cmd,
     )
+
+    def _ensure_rm_force(m: re.Match) -> str:
+        prefix = m.group("prefix") or ""
+        flags = m.group("flags") or ""
+        path = m.group("path")
+        flag_tokens = [token for token in flags.split() if token]
+        if not any("f" in token.lstrip("-") for token in flag_tokens):
+            flag_tokens.append("-f")
+        flag_section = ""
+        if flag_tokens:
+            flag_section = " " + " ".join(flag_tokens)
+        return f"{prefix}rm{flag_section} {path}"
+
+    cmd = re.sub(
+        r'(?P<prefix>(?:^|&&|;)\s*)rm(?P<flags>(?:\s+-[^\s;]+)*)\s+(?P<path>[^\s;]*\*[^;\s]*)',
+        _ensure_rm_force,
+        cmd,
+    )
     # Guard chmod +x path
     cmd = re.sub(
         r'chmod \+x (?P<path>[^\s;&]+)',
@@ -186,6 +214,7 @@ def get_docker_history(image):
 def parse_build_steps(history_lines):
     # We assume the original image built as root, so we switch to root for these steps
     steps = ['    .set_user("root")']
+    steps.extend(DEFAULT_BOOTSTRAP_COMMANDS)
     ensure_chutes = (
         '    .run_command("if command -v pip >/dev/null 2>&1; then pip install --no-cache-dir chutes --upgrade || true; fi")'
     )
@@ -302,7 +331,16 @@ def perform_live_discovery(image, entrypoint, ports, gpus=None, env_vars=None, s
         print(f"Live discovery failed: {e}")
         return [], set()
 
-def generate_route_code(route, idx):
+def _make_unique_name(base: str, tracker: Dict[str, int]) -> str:
+    count = tracker.get(base, 0)
+    if count == 0:
+        tracker[base] = 1
+        return base
+    unique = f"{base}_{count+1}"
+    tracker[base] = count + 1
+    return unique
+
+def generate_route_code(route, name_tracker: Dict[str, int]):
     path = route["path"]
     method = route["method"]
     port = route["port"]
@@ -318,12 +356,15 @@ def generate_route_code(route, idx):
     # Remove leading/trailing underscores
     sanitized_path = sanitized_path.strip('_')
     
-    func_name = f"{method.lower()}_{sanitized_path}"
-    if func_name.endswith("_"): func_name += "root"
+    base_name = f"{method.lower()}_{sanitized_path}"
+    if base_name.endswith("_"): base_name += "root"
     
     # Ensure valid python identifier
-    if func_name[0].isdigit():
-        func_name = f"fn_{func_name}"
+    if base_name and base_name[0].isdigit():
+        base_name = f"fn_{base_name}"
+    elif not base_name:
+        base_name = f"{method.lower()}_route"
+    func_name = _make_unique_name(base_name, name_tracker)
 
     return f"""
 @chute.cord(path="{func_name}", public_api_path="{path}", method="{method}", passthrough=True, passthrough_port={port}, passthrough_path="{target}")
@@ -392,25 +433,42 @@ def main():
         probe_timeout=args.probe_timeout
     )
 
-    # Generate Env Vars
-    env_str = ""
-    for e in args.env:
-        if "=" in e:
-            k, v = e.split("=", 1)
-            env_str += f'    .with_env("{escape_braces_preserving_env(k)}", "{escape_braces_preserving_env(v)}")\n'
+    # Generate Env Vars / metadata
+    protected_env = {"PATH", "HOSTNAME", "HOME"}
+    env_dict: Dict[str, str] = {}
+
+    def _add_env_var(key: str, value: str, allow_protected: bool = False):
+        if not allow_protected and key in protected_env:
+            return
+        # Reinsert key to preserve latest assignment order
+        env_dict.pop(key, None)
+        env_dict[key] = value
 
     for e in meta["env"]:
         if "=" in e:
             k, v = e.split("=", 1)
-            if k not in ["PATH", "HOSTNAME", "HOME"]:
-                env_str += f'    .with_env("{escape_braces_preserving_env(k)}", "{escape_braces_preserving_env(v)}")\n'
+            _add_env_var(k, v, allow_protected=False)
+
+    entrypoint_env_value = meta["entrypoint"] or "/unknown"
+    if entrypoint_env_value:
+        _add_env_var("CHUTE_ENTRYPOINT", entrypoint_env_value, allow_protected=True)
+
+    for e in args.env:
+        if "=" in e:
+            k, v = e.split("=", 1)
+            _add_env_var(k, v, allow_protected=True)
+
+    env_str = ""
+    for k, v in env_dict.items():
+        env_str += f'    .with_env("{escape_braces_preserving_env(k)}", "{escape_braces_preserving_env(v)}")\n'
 
     # Generate Routes Code
     routes_str = ""
+    name_tracker: Dict[str, int] = {}
     
     # Add discovered OpenAPI routes
-    for idx, route in enumerate(discovered_routes):
-        routes_str += generate_route_code(route, idx)
+    for route in discovered_routes:
+        routes_str += generate_route_code(route, name_tracker)
 
     # Interactive Manual Cords
     if args.interactive:
@@ -436,10 +494,13 @@ def main():
             # Auto-generate Function Name
             sanitized_path = re.sub(r'[^a-zA-Z0-9_]', '_', public_api_path.strip('/'))
             sanitized_path = re.sub(r'_+', '_', sanitized_path).strip('_')
-            func_name = f"{method.lower()}_{sanitized_path}"
-            if func_name.endswith("_"): func_name += "root"
-            if not func_name[0].isalpha() and not func_name.startswith("_"):
-                 func_name = f"fn_{func_name}"
+            base_name = f"{method.lower()}_{sanitized_path}"
+            if base_name.endswith("_"): base_name += "root"
+            if not base_name:
+                base_name = f"{method.lower()}_route"
+            if not (base_name[0].isalpha() or base_name.startswith("_")):
+                 base_name = f"fn_{base_name}"
+            func_name = _make_unique_name(base_name, name_tracker)
             
             print(f"-> Auto-generated function name: {func_name}")
 
@@ -478,6 +539,12 @@ def {func_name}(data): pass
     if not routes_str:
         routes_str = "\n# No OpenAPI routes discovered and no manual cords added.\n# Please add @chute.cord definitions manually.\n"
 
+    entrypoint_value = meta["entrypoint"]
+    entrypoint_path = escape_braces(entrypoint_value or "/unknown")
+    entrypoint_literal = f'"{escape_braces(entrypoint_value)}"' if entrypoint_value else "None"
+    service_ports_literal = repr(ports)
+    chute_env_literal = json.dumps(env_dict, indent=4) if env_dict else "{}"
+
     output = TEMPLATE.format_map(_SafeDict({
         "chute_name": chute_name,
         "source_image": args.image,
@@ -485,11 +552,13 @@ def {func_name}(data): pass
         "readme": escape_braces(meta["readme"]).replace("\n", "\\n"), # Simple escape + braces
         "tagline": escape_braces(meta["description"]),
         "build_steps": build_steps,
-        "entrypoint_path": escape_braces(meta["entrypoint"] or "/unknown"),
+        "entrypoint_path": entrypoint_path,
+        "entrypoint_literal": entrypoint_literal,
         "entrypoint_content_comment": escape_braces(meta["content"]).replace("\n", "\n    # "),
-        "ports": ports,
+        "service_ports": service_ports_literal,
         "routes": routes_str,
-        "env_vars": env_str
+        "env_vars": env_str,
+        "chute_env": chute_env_literal,
     })).replace("(Manual)", "").replace("(Manual Build)", "") # Strip "Manual" from description/comments
     
     filename = f"deploy_{chute_name.replace('-', '_')}_auto.py"

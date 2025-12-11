@@ -28,5 +28,9 @@ build/
 .vscode/
 
 # Chutes Repo
-#chutes/
-#chutes-api/
+chutes/
+chutes-api/
+chutes-miner/
+
+# Local test scripts with secrets
+test_xtts_whisper.sh

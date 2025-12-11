@@ -40,6 +40,10 @@ DEV_MODE=false
 DEBUG_MODE=false
 PORT=8000
 
+DEFAULT_STARTUP_DELAY=180
+DEFAULT_PROBE_TIMEOUT=60
+DEFAULT_DISCOVER_GPUS="all"
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -237,14 +241,14 @@ run_route_discovery_for_module() {
     local probe_timeout
     local docker_gpus
 
-    read -rp "Startup delay seconds [120]: " startup_delay
-    startup_delay=${startup_delay:-120}
+    read -rp "Startup delay seconds [${DEFAULT_STARTUP_DELAY}]: " startup_delay
+    startup_delay=${startup_delay:-$DEFAULT_STARTUP_DELAY}
 
-    read -rp "Probe timeout seconds [180]: " probe_timeout
-    probe_timeout=${probe_timeout:-180}
+    read -rp "Probe timeout seconds [${DEFAULT_PROBE_TIMEOUT}]: " probe_timeout
+    probe_timeout=${probe_timeout:-$DEFAULT_PROBE_TIMEOUT}
 
-    read -rp "Docker --gpus value [all]: " docker_gpus
-    docker_gpus=${docker_gpus:-all}
+    read -rp "Docker --gpus value [${DEFAULT_DISCOVER_GPUS}]: " docker_gpus
+    docker_gpus=${docker_gpus:-$DEFAULT_DISCOVER_GPUS}
 
     ensure_venv
     pushd "$SCRIPT_DIR" >/dev/null || return 1
@@ -1525,8 +1529,8 @@ do_create_from_image() {
     read -rp "Chute Name (optional, press Enter for auto): " name
     
     local gpus
-    read -rp "GPUs (e.g. all, 0, none) [all]: " gpus
-    gpus=${gpus:-all}
+    read -rp "GPUs (e.g. all, 0, none) [${DEFAULT_DISCOVER_GPUS}]: " gpus
+    gpus=${gpus:-$DEFAULT_DISCOVER_GPUS}
     
     local -a env_args=()
     echo -e "\nEnter Environment Variables (KEY=VALUE). Press Enter on empty line to finish."
@@ -1544,7 +1548,13 @@ do_create_from_image() {
     
     ensure_venv
     
-    local cmd=(python3 "$SCRIPT_DIR/tools/create_chute_from_image.py" "$image" "--gpus" "$gpus" "--startup-delay" "120" "--interactive")
+    local cmd=(
+        python3 "$SCRIPT_DIR/tools/create_chute_from_image.py" "$image"
+        "--gpus" "$gpus"
+        "--startup-delay" "$DEFAULT_STARTUP_DELAY"
+        "--probe-timeout" "$DEFAULT_PROBE_TIMEOUT"
+        "--interactive"
+    )
     if [[ -n "$name" ]]; then
         cmd+=("--name" "$name")
     fi
