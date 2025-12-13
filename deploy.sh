@@ -107,6 +107,90 @@ get_username() {
     grep -E "^username\s*=" "$CHUTES_CONFIG" 2>/dev/null | cut -d'=' -f2 | tr -d ' '
 }
 
+chutes_api_list_tsv() {
+    # Query Chutes API directly (signed with hotkey) to avoid rich-table truncation.
+    # Output: tab-delimited rows for the given object type.
+    # - chutes: chute_id, name, status(hot|cold), slug
+    # - images: image_id, name, tag, status
+    local object_type="$1"
+    local include_public="${2:-false}"
+
+    ensure_venv
+    ensure_chutes_config
+
+    python - "$object_type" "$include_public" <<'PYCODE'
+import asyncio
+import sys
+
+import aiohttp
+
+from chutes.config import get_config
+from chutes.util.auth import sign_request
+
+
+def _truthy(s: str) -> bool:
+    return str(s).strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+object_type = sys.argv[1]
+include_public = _truthy(sys.argv[2]) if len(sys.argv) > 2 else False
+
+
+def out(fields):
+    sys.stdout.write(
+        "\t".join("" if v is None else str(v).replace("\t", " ") for v in fields) + "\n"
+    )
+
+
+async def fetch_all():
+    config = get_config()
+    headers, _ = sign_request(purpose=object_type)
+    items = []
+    page = 0
+    limit = 200
+    base_params = {}
+    if include_public:
+        base_params["include_public"] = "true"
+
+    async with aiohttp.ClientSession(base_url=config.generic.api_base_url) as session:
+        while True:
+            params = dict(base_params)
+            params["limit"] = str(limit)
+            params["page"] = str(page)
+            async with session.get(f"/{object_type}/", headers=headers, params=params) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise SystemExit(
+                        f"Failed to list {object_type}: {resp.status} {text[:300]}"
+                    )
+                data = await resp.json()
+
+            batch = data.get("items") or []
+            items.extend(batch)
+            total = int(data.get("total") or 0)
+            if not batch or len(items) >= total:
+                break
+            page += 1
+
+    return items
+
+
+items = asyncio.run(fetch_all())
+for item in items:
+    if object_type == "chutes":
+        out(
+            [
+                item.get("chute_id"),
+                item.get("name"),
+                "hot" if item.get("hot") else "cold",
+                item.get("slug"),
+            ]
+        )
+    elif object_type == "images":
+        out([item.get("image_id"), item.get("name"), item.get("tag"), item.get("status")])
+PYCODE
+}
+
 show_usage() {
     cat << EOF
 ${CYAN}Chutes Deploy Script${NC}
@@ -1032,53 +1116,35 @@ list_deployed_chutes() {
 }
 
 select_chute_to_delete() {
+    local lines_raw=""
+    local lines=()
     local chute_ids=()
     local chute_names=()
+    local chute_statuses=()
+    local chute_slugs=()
     local choice=""
-    
+
+    if ! lines_raw="$(chutes_api_list_tsv "chutes")"; then
+        print_error "Failed to list chutes (API call). Check network/auth." >&2
+        return 1
+    fi
+
+    if [[ -n "$lines_raw" ]]; then
+        mapfile -t lines <<<"$lines_raw"
+    fi
+
+    for line in "${lines[@]}"; do
+        IFS=$'\t' read -r cid cname cstatus cslug <<<"$line"
+        [[ -n "$cid" && -n "$cname" ]] || continue
+        chute_ids+=("$cid")
+        chute_names+=("$cname")
+        chute_statuses+=("$cstatus")
+        chute_slugs+=("$cslug")
+    done
+
     {
         print_header "Select Chute to Delete"
-        
-        local tmp_output
-        tmp_output=$(mktemp)
-        chutes chutes list 2>&1 | tee "$tmp_output"
-        echo ""
-        
-        # Parse box table: ID in col1, Name in col2
-        while IFS=$'\t' read -r cid_raw cname; do
-            [[ -n "$cid_raw" && -n "$cname" ]] || continue
-            # Keep only UUID-safe characters (alnum and hyphen), strip whitespace/box chars
-            cid=$(echo "$cid_raw" | tr -cd 'A-Za-z0-9-')
-            # Normalize multiple hyphens/back-to-back punctuation
-            cid=$(echo "$cid" | sed 's/--*/-/g')
-            # Accept full UUID format only
-            if [[ "$cid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
-                chute_ids+=("$cid")
-                chute_names+=("$cname")
-            fi
-        done < <(
-            awk -F '│' 'NF>=3{
-                gsub(/^[ \t]+|[ \t]+$/, "", $1);
-                gsub(/^[ \t]+|[ \t]+$/, "", $2);
-                id=$1; name=$2;
-                if(id!="" && name!="" && id!="ID" && name!="Name"){print id"\t"name}
-            }' "$tmp_output"
-        )
-        rm -f "$tmp_output"
-        if [[ ${#chute_ids[@]} -eq 0 ]]; then
-            while read -r cid; do
-                chute_ids+=("$cid")
-                chute_names+=("chute-${#chute_ids[@]}")
-            done < <(grep -Eo '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' "$tmp_output" | uniq)
-        fi
-        # Fallback: if no IDs parsed (e.g., table truncation with ellipsis), try regex on raw output
-        if [[ ${#chute_ids[@]} -eq 0 ]]; then
-            while read -r cid; do
-                chute_ids+=("$cid")
-                chute_names+=("chute-${#chute_ids[@]}")
-            done < <(grep -Eo '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' "$tmp_output" | uniq)
-        fi
-        
+
         if [[ ${#chute_ids[@]} -eq 0 ]]; then
             print_warning "No deployed chutes found"
             echo ""
@@ -1087,32 +1153,34 @@ select_chute_to_delete() {
             local i=1
             while [[ $i -le ${#chute_ids[@]} ]]; do
                 local idx=$((i-1))
-                echo -e "  ${GREEN}$i)${NC} ${chute_names[$idx]} (id: ${chute_ids[$idx]})"
+                echo -e "  ${GREEN}$i)${NC} ${chute_names[$idx]} (${chute_statuses[$idx]})"
+                [[ -n "${chute_slugs[$idx]}" ]] && echo -e "      slug: ${chute_slugs[$idx]}"
+                echo -e "      id:   ${chute_ids[$idx]}"
                 i=$((i + 1))
             done
             echo -e "  ${YELLOW}b)${NC} Back"
             echo ""
-            
+
             read -rp "Select chute to delete (1-${#chute_ids[@]}): " choice
         fi
     } >&2
-    
+
     if [[ ${#chute_ids[@]} -eq 0 ]]; then
         return 1
     fi
-    
+
     if [[ "$choice" == "b" || "$choice" == "B" ]]; then
         return 1
     fi
-    
+
     if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#chute_ids[@]} ]]; then
         local idx=$((choice - 1))
         echo "${chute_ids[$idx]}|${chute_names[$idx]}"
         return 0
-    else
-        print_error "Invalid selection"
-        return 1
     fi
+
+    print_error "Invalid selection" >&2
+    return 1
 }
 
 do_delete() {
@@ -1182,82 +1250,70 @@ list_built_images() {
 }
 
 select_image_to_delete() {
-    ensure_venv
-    local tmp_output
-    tmp_output=$(mktemp)
-    
+    local lines_raw=""
+    local lines=()
     local image_ids=()
     local image_names=()
     local image_tags=()
+    local image_statuses=()
     local choice=""
-    
+
+    if ! lines_raw="$(chutes_api_list_tsv "images")"; then
+        print_error "Failed to list images (API call). Check network/auth." >&2
+        return 1
+    fi
+
+    if [[ -n "$lines_raw" ]]; then
+        mapfile -t lines <<<"$lines_raw"
+    fi
+
+    for line in "${lines[@]}"; do
+        IFS=$'\t' read -r iid iname itag istatus <<<"$line"
+        [[ -n "$iid" && -n "$iname" ]] || continue
+        image_ids+=("$iid")
+        image_names+=("$iname")
+        image_tags+=("${itag:-unknown}")
+        image_statuses+=("${istatus:-unknown}")
+    done
+
     {
         print_header "Select Image to Delete"
-        chutes images list 2>&1 | tee "$tmp_output"
-        echo ""
-        
-        # Parse box table: ID col1, Name col2, Tag col3
-        while IFS=$'\t' read -r iid_raw iname itag; do
-            [[ -n "$iid_raw" && -n "$iname" ]] || continue
-            iid=$(echo "$iid_raw" | tr -cd 'A-Za-z0-9-')
-            iid=$(echo "$iid" | sed 's/--*/-/g')
-            if [[ "$iid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
-                image_ids+=("$iid")
-                image_names+=("$iname")
-                image_tags+=("${itag:-unknown}")
-            fi
-        done < <(
-            awk -F '│' 'NF>=3{
-                gsub(/^[ \t]+|[ \t]+$/, "", $1);
-                gsub(/^[ \t]+|[ \t]+$/, "", $2);
-                gsub(/^[ \t]+|[ \t]+$/, "", $3);
-                id=$1; name=$2; tag=$3;
-                if(id!="" && name!="" && id!="ID" && name!="Name"){print id"\t"name"\t"tag}
-            }' "$tmp_output"
-        )
-        if [[ ${#image_ids[@]} -eq 0 ]]; then
-            while read -r iid; do
-                image_ids+=("$iid")
-                image_names+=("image-${#image_ids[@]}")
-                image_tags+=("unknown")
-            done < <(grep -Eo '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' "$tmp_output" | uniq)
-        fi
-        rm -f "$tmp_output"
-        
+
         if [[ ${#image_ids[@]} -eq 0 ]]; then
             print_warning "No built images found"
-            echo ""  # spacing
+            echo ""
         else
             echo -e "${BLUE}Built Images:${NC}"
             local i=1
             while [[ $i -le ${#image_ids[@]} ]]; do
                 local idx=$((i-1))
-                echo -e "  ${GREEN}$i)${NC} ${image_names[$idx]}:${image_tags[$idx]} (id: ${image_ids[$idx]})"
+                echo -e "  ${GREEN}$i)${NC} ${image_names[$idx]}:${image_tags[$idx]} (${image_statuses[$idx]})"
+                echo -e "      id: ${image_ids[$idx]}"
                 i=$((i + 1))
             done
             echo -e "  ${YELLOW}b)${NC} Back"
             echo ""
-            
+
             read -rp "Select image to delete (1-${#image_ids[@]}): " choice
         fi
     } >&2
-    
+
     if [[ ${#image_ids[@]} -eq 0 ]]; then
         return 1
     fi
-    
+
     if [[ "$choice" == "b" || "$choice" == "B" ]]; then
         return 1
     fi
-    
+
     if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#image_ids[@]} ]]; then
         local idx=$((choice - 1))
         echo "${image_ids[$idx]}|${image_names[$idx]}|${image_tags[$idx]}"
         return 0
-    else
-        print_error "Invalid selection"
-        return 1
     fi
+
+    print_error "Invalid selection" >&2
+    return 1
 }
 
 do_delete_image() {
@@ -1388,37 +1444,35 @@ PYCODE
 }
 
 select_chute_for_warmup() {
+    local lines_raw=""
+    local lines=()
     local chute_ids=()
     local chute_names=()
+    local chute_statuses=()
+    local chute_slugs=()
     local choice=""
-    
+
+    if ! lines_raw="$(chutes_api_list_tsv "chutes")"; then
+        print_error "Failed to list chutes (API call). Check network/auth." >&2
+        return 1
+    fi
+
+    if [[ -n "$lines_raw" ]]; then
+        mapfile -t lines <<<"$lines_raw"
+    fi
+
+    for line in "${lines[@]}"; do
+        IFS=$'\t' read -r cid cname cstatus cslug <<<"$line"
+        [[ -n "$cid" && -n "$cname" ]] || continue
+        chute_ids+=("$cid")
+        chute_names+=("$cname")
+        chute_statuses+=("$cstatus")
+        chute_slugs+=("$cslug")
+    done
+
     {
         print_header "Select Chute to Warmup"
-        
-        local tmp_output
-        tmp_output=$(mktemp)
-        chutes chutes list 2>&1 | tee "$tmp_output"
-        echo ""
-        
-        # Parse box table: ID in col1, Name in col2
-        while IFS=$'\t' read -r cid_raw cname; do
-            [[ -n "$cid_raw" && -n "$cname" ]] || continue
-            cid=$(echo "$cid_raw" | tr -cd 'A-Za-z0-9-')
-            cid=$(echo "$cid" | sed 's/--*/-/g')
-            if [[ "$cid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
-                chute_ids+=("$cid")
-                chute_names+=("$cname")
-            fi
-        done < <(
-            awk -F '│' 'NF>=3{
-                gsub(/^[ \t]+|[ \t]+$/, "", $1);
-                gsub(/^[ \t]+|[ \t]+$/, "", $2);
-                id=$1; name=$2;
-                if(id!="" && name!="" && id!="ID" && name!="Name"){print id"\t"name}
-            }' "$tmp_output"
-        )
-        rm -f "$tmp_output"
-        
+
         if [[ ${#chute_ids[@]} -eq 0 ]]; then
             print_warning "No deployed chutes found"
             echo ""
@@ -1427,32 +1481,34 @@ select_chute_for_warmup() {
             local i=1
             while [[ $i -le ${#chute_ids[@]} ]]; do
                 local idx=$((i-1))
-                echo -e "  ${GREEN}$i)${NC} ${chute_names[$idx]} (id: ${chute_ids[$idx]})"
+                echo -e "  ${GREEN}$i)${NC} ${chute_names[$idx]} (${chute_statuses[$idx]})"
+                [[ -n "${chute_slugs[$idx]}" ]] && echo -e "      slug: ${chute_slugs[$idx]}"
+                echo -e "      id:   ${chute_ids[$idx]}"
                 i=$((i + 1))
             done
             echo -e "  ${YELLOW}b)${NC} Back"
             echo ""
-            
+
             read -rp "Select chute to warm up (1-${#chute_ids[@]}): " choice
         fi
     } >&2
-    
+
     if [[ ${#chute_ids[@]} -eq 0 ]]; then
         return 1
     fi
-    
+
     if [[ "$choice" == "b" || "$choice" == "B" ]]; then
         return 1
     fi
-    
+
     if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#chute_ids[@]} ]]; then
         local idx=$((choice - 1))
         echo "${chute_ids[$idx]}|${chute_names[$idx]}"
         return 0
-    else
-        print_error "Invalid selection"
-        return 1
     fi
+
+    print_error "Invalid selection" >&2
+    return 1
 }
 
 do_warmup() {

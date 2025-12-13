@@ -135,6 +135,7 @@ register_passthrough_routes(chute, load_route_manifest(static_routes=CHUTE_STATI
 | **No routes discovered** | Service lacks OpenAPI; define `CHUTE_STATIC_ROUTES` in the deploy script. |
 | **Container exits immediately** | Check `CHUTE_ENV` in deploy script; missing vars often cause crashes. |
 | **Build Segfaults** | Ensure `build_wrapper_image` is used; Conda Python is incompatible with `chutes-inspecto.so`. |
+| **Deploy menus fail on small terminals (truncated UUIDs)** | `deploy.sh` fetches chute/image IDs via the signed API (not by scraping `rich` tables), so terminal width shouldn’t matter. If you see “Failed to list … (API call)”, check network + `~/.chutes/config.ini`. |
 
 ---
 
