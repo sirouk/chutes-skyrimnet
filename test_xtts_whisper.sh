@@ -373,8 +373,14 @@ PY
   
   local switch_model_payload="${TMP_DIR}/switch_model.json"
   echo '{"model_name": "v2.0.2"}' > "${switch_model_payload}"
-  # This may return 200 (newly loaded) or a graceful 200 from our proxy if already loaded
-  run_request "switch_model" "POST" "/switch_model" "${switch_model_payload}"
+  # This may return 200 (newly loaded) or 400 (already loaded). We use a subshell to intercept the die/exit.
+  if ! ( run_request "switch_model" "POST" "/switch_model" "${switch_model_payload}" ); then
+    if grep -iq "already loaded" "$(body_path switch_model)" 2>/dev/null; then
+      warn "switch_model reported model already loaded (400), continuing..."
+    else
+      die "switch_model failed unexpectedly"
+    fi
+  fi
   
   local set_tts_payload="${TMP_DIR}/set_tts_settings.json"
   echo '{"temperature": 0.75}' > "${set_tts_payload}"
