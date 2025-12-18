@@ -383,7 +383,20 @@ PY
   fi
   
   local set_tts_payload="${TMP_DIR}/set_tts_settings.json"
-  echo '{"temperature": 0.75}' > "${set_tts_payload}"
+  # Fetch current settings first to ensure we send a complete object (upstream requires all fields)
+  "${PY_BIN}" - "$(body_path get_tts_settings)" "${set_tts_payload}" <<'PY'
+import json, pathlib, sys
+try:
+    data = json.loads(pathlib.Path(sys.argv[1]).read_text())
+    data["temperature"] = 0.75
+    pathlib.Path(sys.argv[2]).write_text(json.dumps(data))
+except Exception as e:
+    # Fallback to a safe full payload if GET failed
+    pathlib.Path(sys.argv[2]).write_text(json.dumps({
+        "temperature": 0.75, "length_penalty": 1.0, "repetition_penalty": 5.0,
+        "top_k": 50, "top_p": 0.85, "speed": 1, "enable_text_splitting": True, "stream_chunk_size": 100
+    }))
+PY
   run_request "set_tts_settings" "POST" "/set_tts_settings" "${set_tts_payload}"
 
   run_request "create_latents" "POST" "/create_latents" "${latents_payload}"
