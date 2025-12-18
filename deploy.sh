@@ -1636,24 +1636,32 @@ do_create_from_image() {
 show_menu() {
     echo ""
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════════${NC}"
-    echo -e "${CYAN}  Chutes Deploy${NC}"
+    echo -e "${CYAN}  Chutes Deploy Hub${NC}"
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════════${NC}"
     echo ""
-    echo -e "  ${GREEN}1)${NC} Account info (username + wallet)"
-    echo -e "  ${GREEN}2)${NC} List built images"
-    echo -e "  ${GREEN}3)${NC} List deployed chutes"
-    echo -e "  ${GREEN}4)${NC} Build chute from deploy_*.py (uses image as base)"
-    echo -e "  ${GREEN}5)${NC} Create deploy_*_auto.py (uses parachutes base)"
-    echo -e "  ${GREEN}6)${NC} Run in Docker (GPU sanity test)"
-    echo -e "  ${GREEN}7)${NC} Run dev mode on host"
-    echo -e "  ${GREEN}8)${NC} Deploy chute to Chutes.ai"
-    echo -e "  ${GREEN}9)${NC} Warmup chute once"
-    echo -e "  ${GREEN}10)${NC} Keep chute warm (loop)"
-    echo -e "  ${GREEN}11)${NC} Check chute status"
-    echo -e "  ${GREEN}12)${NC} Tail instance logs"
-    echo -e "  ${GREEN}13)${NC} Delete chute"
-    echo -e "  ${GREEN}14)${NC} Delete image"
-    echo -e "  ${GREEN}q)${NC} Quit"
+    echo -e "  ${CYAN}── ACCOUNT ───────────────────────────────────────────────────────${NC}"
+    echo -e "  ${GREEN} 1)${NC} Show Account Info (wallet + balance)"
+    echo ""
+    echo -e "  ${CYAN}── BUILDING ──────────────────────────────────────────────────────${NC}"
+    echo -e "  ${GREEN} 2)${NC} Build Chute (from local deploy_*.py)"
+    echo -e "  ${GREEN} 3)${NC} Discover & Define (create from existing Docker image)"
+    echo ""
+    echo -e "  ${CYAN}── LOCAL TESTING ─────────────────────────────────────────────────${NC}"
+    echo -e "  ${GREEN} 4)${NC} Run in Docker (GPU sanity test)"
+    echo -e "  ${GREEN} 5)${NC} Run in Dev Mode (host process)"
+    echo ""
+    echo -e "  ${CYAN}── CLOUD OPERATIONS ──────────────────────────────────────────────${NC}"
+    echo -e "  ${GREEN} 6)${NC} Deploy to Chutes.ai"
+    echo -e "  ${GREEN} 7)${NC} Check Chute Status (health + instances)"
+    echo -e "  ${GREEN} 8)${NC} Tail Instance Logs"
+    echo -e "  ${GREEN} 9)${NC} Warmup Chute (trigger manual spin-up)"
+    echo -e "  ${GREEN}10)${NC} Keep Chute Warm (continuous ping loop)"
+    echo ""
+    echo -e "  ${CYAN}── MANAGEMENT ────────────────────────────────────────────────────${NC}"
+    echo -e "  ${GREEN}11)${NC} List & Delete Chutes"
+    echo -e "  ${GREEN}12)${NC} List & Delete Images"
+    echo ""
+    echo -e "  ${GREEN} q)${NC} Quit"
     echo ""
 }
 
@@ -1824,12 +1832,6 @@ main() {
                 show_account_info
                 ;;
             2)
-                do_list_images
-                ;;
-            3)
-                do_list_chutes
-                ;;
-            4)
                 module=$(select_module "Select module to build") || continue
                 if ! prompt_route_discovery_before_build "$module"; then
                     continue
@@ -1852,10 +1854,10 @@ main() {
                     *) print_error "Invalid option" ;;
                 esac
                 ;;
-            5)
+            3)
                 do_create_from_image
                 ;;
-            6)
+            4)
                 # Run in Docker (for wrapped services like XTTS)
                 show_running_chute_containers
                 module=$(select_module "Select module to run in Docker") || continue
@@ -1864,7 +1866,7 @@ main() {
                 do_run_docker "$module"
                 PORT=8000
                 ;;
-            7)
+            5)
                 # Run dev mode (for Python chutes, runs on host)
                 show_running_chute_processes
                 module=$(select_module "Select module for dev mode") || continue
@@ -1875,9 +1877,22 @@ main() {
                 DEV_MODE=false
                 PORT=8000
                 ;;
-            8)
+            6)
                 module=$(select_module "Select module to deploy") || continue
                 do_deploy "$module"
+                ;;
+            7)
+                chute_name=$(select_chute_for_status) || continue
+                do_chute_status "$chute_name"
+                ;;
+            8)
+                module=$(select_module "Select module for logs") || continue
+                # Extract CHUTE_NAME from the module file
+                chute_name=$(grep -oP "CHUTE_NAME\s*=\s*['\"]\\K[^'\"]*" "$SCRIPT_DIR/${module}.py" 2>/dev/null)
+                if [[ -z "$chute_name" ]]; then
+                    chute_name="${module#deploy_}"  # fallback: strip deploy_ prefix
+                fi
+                do_check_logs "$chute_name"
                 ;;
             9)
                 chute_name=$(select_chute_for_warmup) || continue
@@ -1888,25 +1903,12 @@ main() {
                 do_keep_warm "$chute_name"
                 ;;
             11)
-                chute_name=$(select_chute_for_status) || continue
-                do_chute_status "$chute_name"
-                ;;
-            12)
-                module=$(select_module "Select module for logs") || continue
-                # Extract CHUTE_NAME from the module file
-                chute_name=$(grep -oP "CHUTE_NAME\s*=\s*['\"]\\K[^'\"]*" "$SCRIPT_DIR/${module}.py" 2>/dev/null)
-                if [[ -z "$chute_name" ]]; then
-                    chute_name="${module#deploy_}"  # fallback: strip deploy_ prefix
-                fi
-                do_check_logs "$chute_name"
-                ;;
-            13)
                 chute_name=$(select_chute_to_delete) || continue
                 if [[ -n "$chute_name" ]]; then
                     do_delete "$chute_name"
                 fi
                 ;;
-            14)
+            12)
                 image_name=$(select_image_to_delete) || continue
                 if [[ -n "$image_name" ]]; then
                     do_delete_image "$image_name"
