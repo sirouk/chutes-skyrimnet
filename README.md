@@ -103,6 +103,17 @@ This tool (`tools/discover_routes.py`) will:
 
 If no manifest exists when you choose “Build chute,” the prompt now defaults to **Yes** so discovery runs before the build.
 
+### 4. Verify XTTS + Whisper Routes
+
+Use `./test_xtts_whisper.sh` to exercise every public cord exposed by `deploy_xtts_whisper.py` once the chute is warm. The harness now:
+
+- auto-loads `CHUTES_API_KEY` from `.env` and warms `deploy_xtts_whisper` unless `SKIP_WARMUP=1`
+- replays the sample audio in `tests/create_and_store_latents.wav` to seed all XTTS payloads
+- enumerates `/speakers_list`, `/speakers`, `/languages`, `/get_folders`, `/get_models_list`, `/get_tts_settings`
+- posts to every XTTS JSON/multipart cord (`set_output`, `set_speaker_folder`, `switch_model`, `set_tts_settings`, `create_latents`, `store_latents`, `create_and_store_latents`, `tts_to_audio`, `tts_to_file`) and asserts file paths + audio content-types
+- hits Whisper GET/POST (`/load`, `/whisper_load`, `/inference`) and fails fast on error/detail payloads
+- saves artifacts (audio + JSON bodies/headers) under a temp directory for inspection
+
 ---
 
 ## Deploy Script Structure
