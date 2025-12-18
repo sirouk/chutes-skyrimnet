@@ -13,6 +13,7 @@ import json
 import base64
 import aiohttp
 import hashlib
+from contextvars import ContextVar
 from configparser import ConfigParser
 from typing import Any
 from loguru import logger
@@ -20,6 +21,11 @@ from fastapi import Response, HTTPException, Request
 
 from chutes.chute import Chute, NodeSelector
 from tools.chute_wrappers import build_wrapper_image, register_service_launcher
+
+# -----------------------------------------------------------------------------
+# User Context for Siloing
+# -----------------------------------------------------------------------------
+_user_id_context: ContextVar[str] = ContextVar("user_id", default="default")
 
 # -----------------------------------------------------------------------------
 # Config
@@ -30,7 +36,7 @@ chutes_config.read(os.path.expanduser("~/.chutes/config.ini"))
 USERNAME = os.getenv("CHUTES_USERNAME") or chutes_config.get("auth", "username", fallback="chutes")
 
 CHUTE_NAME = "xtts-whisper"
-CHUTE_TAG = "tts-stt-v0.1.21"
+CHUTE_TAG = "tts-stt-v0.1.22"
 CHUTE_BASE_IMAGE = "elbios/xtts-whisper:latest"
 CHUTE_PYTHON_VERSION = "3.11"
 CHUTE_GPU_COUNT = 1
@@ -100,6 +106,16 @@ chute = Chute(
     shutdown_after_seconds=CHUTE_SHUTDOWN_AFTER_SECONDS,
 )
 
+@chute.middleware("http")
+async def add_user_id_to_context(request: Request, call_next):
+    """Middleware to capture user ID for siloing."""
+    user_id = request.headers.get("X-Chutes-UserID", "default")
+    token = _user_id_context.set(user_id)
+    try:
+        return await call_next(request)
+    finally:
+        _user_id_context.reset(token)
+
 # -----------------------------------------------------------------------------
 # Proxy Helpers
 # -----------------------------------------------------------------------------
@@ -158,25 +174,25 @@ async def _proxy_get(base: str, path: str, params: dict = None) -> Any:
             return await _consume_response(resp, url)
 
 
-def _get_user_id(request: Request) -> str:
+def _get_user_id() -> str:
     """
-    Extract user ID from request headers.
+    Extract hashed user ID from context.
     Falls back to 'default' if not present (e.g. local testing).
     """
-    user_id = request.headers.get("X-Chutes-UserID")
-    if not user_id:
+    user_id = _user_id_context.get()
+    if user_id == "default":
         return "default"
     # Return hex hash for safe folder naming
     return hashlib.md5(user_id.encode()).hexdigest()[:16]
 
 
-async def _proxy_post_multipart(base: str, path: str, payload: dict, request: Request = None) -> Any:
+async def _proxy_post_multipart(base: str, path: str, payload: dict) -> Any:
     """POST with JSON->multipart conversion, return JSON or raw bytes wrapped in Response."""
     url = f"{base}{path}"
     
     # Silo speaker folder if user ID is available
-    if request and "speaker_name" in payload:
-        user_silo = _get_user_id(request)
+    if "speaker_name" in payload:
+        user_silo = _get_user_id()
         payload["speaker_name"] = f"{user_silo}_{payload['speaker_name']}"
         logger.debug(f"Siloing speaker to: {payload['speaker_name']}")
 
@@ -186,20 +202,19 @@ async def _proxy_post_multipart(base: str, path: str, payload: dict, request: Re
             return await _consume_response(resp, url)
 
 
-async def _proxy_post_json(base: str, path: str, payload: dict, request: Request = None) -> Any:
+async def _proxy_post_json(base: str, path: str, payload: dict) -> Any:
     """POST with JSON body (for endpoints that accept JSON)."""
     url = f"{base}{path}"
 
-    # Silo speaker name/wav if user ID is available
-    if request:
-        user_silo = _get_user_id(request)
-        if "speaker_name" in payload:
-            payload["speaker_name"] = f"{user_silo}_{payload['speaker_name']}"
-        if "speaker_wav" in payload:
-            # Only prefix if it's a name, not a path or latent id
-            if not payload["speaker_wav"].startswith("/") and "|" not in payload["speaker_wav"]:
-                payload["speaker_wav"] = f"{user_silo}_{payload['speaker_wav']}"
-        logger.debug(f"Siloing payload keys for user {user_silo}")
+    # Silo speaker name/wav
+    user_silo = _get_user_id()
+    if "speaker_name" in payload:
+        payload["speaker_name"] = f"{user_silo}_{payload['speaker_name']}"
+    if "speaker_wav" in payload:
+        # Only prefix if it's a name, not a path or latent id
+        if not payload["speaker_wav"].startswith("/") and "|" not in payload["speaker_wav"]:
+            payload["speaker_wav"] = f"{user_silo}_{payload['speaker_wav']}"
+    logger.debug(f"Siloing payload keys for user {user_silo}")
 
     async with aiohttp.ClientSession() as session:
         async with session.post(url, json=payload) as resp:
@@ -257,60 +272,60 @@ async def get_tts_settings(self, args: dict) -> Any:
 # -----------------------------------------------------------------------------
 
 @chute.cord(public_api_path="/set_output", public_api_method="POST")
-async def set_output(self, args: dict, request: Request) -> Any:
-    return await _proxy_post_json(XTTS_BASE, "/set_output", args or {}, request=request)
+async def set_output(self, args: dict) -> Any:
+    return await _proxy_post_json(XTTS_BASE, "/set_output", args or {})
 
 
 @chute.cord(public_api_path="/set_speaker_folder", public_api_method="POST")
-async def set_speaker_folder(self, args: dict, request: Request) -> Any:
-    return await _proxy_post_json(XTTS_BASE, "/set_speaker_folder", args or {}, request=request)
+async def set_speaker_folder(self, args: dict) -> Any:
+    return await _proxy_post_json(XTTS_BASE, "/set_speaker_folder", args or {})
 
 
 @chute.cord(public_api_path="/switch_model", public_api_method="POST")
-async def switch_model(self, args: dict, request: Request) -> Any:
-    return await _proxy_post_json(XTTS_BASE, "/switch_model", args or {}, request=request)
+async def switch_model(self, args: dict) -> Any:
+    return await _proxy_post_json(XTTS_BASE, "/switch_model", args or {})
 
 
 @chute.cord(public_api_path="/set_tts_settings", public_api_method="POST")
-async def set_tts_settings_post(self, args: dict, request: Request) -> Any:
-    return await _proxy_post_json(XTTS_BASE, "/set_tts_settings", args or {}, request=request)
+async def set_tts_settings_post(self, args: dict) -> Any:
+    return await _proxy_post_json(XTTS_BASE, "/set_tts_settings", args or {})
 
 
 @chute.cord(public_api_path="/tts_to_audio", public_api_method="POST", output_content_type="audio/wav")
-async def tts_to_audio(self, args: dict, request: Request) -> Response:
+async def tts_to_audio(self, args: dict) -> Response:
     """
     Generate audio from text. Expects:
       - text: str
       - language: str
       - speaker_wav: str (voice name or path to latents)
     """
-    return await _proxy_post_multipart(XTTS_BASE, "/tts_to_audio", args or {}, request=request)
+    return await _proxy_post_multipart(XTTS_BASE, "/tts_to_audio", args or {})
 
 
 @chute.cord(public_api_path="/tts_to_file", public_api_method="POST")
-async def tts_to_file(self, args: dict, request: Request) -> Any:
-    return await _proxy_post_multipart(XTTS_BASE, "/tts_to_file", args or {}, request=request)
+async def tts_to_file(self, args: dict) -> Any:
+    return await _proxy_post_multipart(XTTS_BASE, "/tts_to_file", args or {})
 
 
 @chute.cord(public_api_path="/create_latents", public_api_method="POST")
-async def create_latents(self, args: dict, request: Request) -> Any:
-    return await _proxy_post_multipart(XTTS_BASE, "/create_latents", args or {}, request=request)
+async def create_latents(self, args: dict) -> Any:
+    return await _proxy_post_multipart(XTTS_BASE, "/create_latents", args or {})
 
 
 @chute.cord(public_api_path="/store_latents", public_api_method="POST")
-async def store_latents(self, args: dict, request: Request) -> Any:
-    return await _proxy_post_json(XTTS_BASE, "/store_latents", args or {}, request=request)
+async def store_latents(self, args: dict) -> Any:
+    return await _proxy_post_json(XTTS_BASE, "/store_latents", args or {})
 
 
 @chute.cord(public_api_path="/create_and_store_latents", public_api_method="POST")
-async def create_and_store_latents(self, args: dict, request: Request) -> Any:
+async def create_and_store_latents(self, args: dict) -> Any:
     """
     Clone a speaker voice from audio. Expects:
       - speaker_name: str
       - language: str
       - wav_file_base64: base64-encoded audio
     """
-    return await _proxy_post_multipart(XTTS_BASE, "/create_and_store_latents", args or {}, request=request)
+    return await _proxy_post_multipart(XTTS_BASE, "/create_and_store_latents", args or {})
 
 
 # -----------------------------------------------------------------------------
@@ -332,12 +347,12 @@ async def whisper_load_get(self, args: dict) -> Any:
 
 
 @chute.cord(public_api_path="/whisper_load", public_api_method="POST")
-async def whisper_load_post(self, args: dict, request: Request) -> Any:
-    return await _proxy_post_json(WHISPER_BASE, "/load", args or {}, request=request)
+async def whisper_load_post(self, args: dict) -> Any:
+    return await _proxy_post_json(WHISPER_BASE, "/load", args or {})
 
 
 @chute.cord(public_api_path="/inference", public_api_method="POST")
-async def whisper_inference(self, args: dict, request: Request) -> Any:
+async def whisper_inference(self, args: dict) -> Any:
     """
     Transcribe audio. Expects:
       - file_base64: base64-encoded audio (will be sent as 'file' multipart field)
@@ -347,7 +362,7 @@ async def whisper_inference(self, args: dict, request: Request) -> Any:
     payload = dict(args) if args else {}
     if "file_base64" in payload:
         payload["file_base64"] = payload["file_base64"]
-    return await _proxy_post_multipart(WHISPER_BASE, "/inference", payload, request=request)
+    return await _proxy_post_multipart(WHISPER_BASE, "/inference", payload)
 
 
 # -----------------------------------------------------------------------------
