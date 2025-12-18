@@ -1886,12 +1886,7 @@ main() {
                 do_chute_status "$chute_name"
                 ;;
             8)
-                module=$(select_module "Select module for logs") || continue
-                # Extract CHUTE_NAME from the module file
-                chute_name=$(grep -oP "CHUTE_NAME\s*=\s*['\"]\\K[^'\"]*" "$SCRIPT_DIR/${module}.py" 2>/dev/null)
-                if [[ -z "$chute_name" ]]; then
-                    chute_name="${module#deploy_}"  # fallback: strip deploy_ prefix
-                fi
+                chute_name=$(select_chute_for_status) || continue
                 do_check_logs "$chute_name"
                 ;;
             9)
