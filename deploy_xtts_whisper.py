@@ -276,7 +276,7 @@ async def set_tts_settings_post(self, args: dict, request: Request) -> Any:
     return await _proxy_post_json(XTTS_BASE, "/set_tts_settings", args or {}, request=request)
 
 
-@chute.cord(public_api_path="/tts_to_audio/", public_api_method="POST", output_content_type="audio/wav")
+@chute.cord(public_api_path="/tts_to_audio", public_api_method="POST", output_content_type="audio/wav")
 async def tts_to_audio(self, args: dict, request: Request) -> Response:
     """
     Generate audio from text. Expects:
@@ -284,13 +284,7 @@ async def tts_to_audio(self, args: dict, request: Request) -> Response:
       - language: str
       - speaker_wav: str (voice name or path to latents)
     """
-    return await _proxy_post_multipart(XTTS_BASE, "/tts_to_audio/", args or {}, request=request)
-
-
-@chute.cord(public_api_path="/tts_to_audio", public_api_method="POST", output_content_type="audio/wav")
-async def tts_to_audio_alias(self, args: dict, request: Request) -> Response:
-    """Alias for /tts_to_audio/ without trailing slash."""
-    return await self.tts_to_audio(args, request)
+    return await _proxy_post_multipart(XTTS_BASE, "/tts_to_audio", args or {}, request=request)
 
 
 @chute.cord(public_api_path="/tts_to_file", public_api_method="POST")
@@ -317,12 +311,6 @@ async def create_and_store_latents(self, args: dict, request: Request) -> Any:
       - wav_file_base64: base64-encoded audio
     """
     return await _proxy_post_multipart(XTTS_BASE, "/create_and_store_latents", args or {}, request=request)
-
-
-@chute.cord(public_api_path="/create_and_store_latents/", public_api_method="POST")
-async def create_and_store_latents_alias(self, args: dict, request: Request) -> Any:
-    """Alias for /create_and_store_latents with trailing slash."""
-    return await self.create_and_store_latents(args, request)
 
 
 # -----------------------------------------------------------------------------

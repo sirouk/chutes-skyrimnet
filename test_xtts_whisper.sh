@@ -381,13 +381,10 @@ PY
   run_request "tts_to_file" "POST" "/tts_to_file" "${tts_payload}"
   assert_json_keys "tts_to_file" "file_path"
 
-  # TTS endpoint (testing both slashed and non-slashed alias)
-  run_request "tts_to_audio_slashed" "POST" "/tts_to_audio/" "${tts_payload}" "binary"
-  assert_content_type "tts_to_audio_slashed" "audio"
-  
-  run_request "tts_to_audio_alias" "POST" "/tts_to_audio" "${tts_payload}" "binary"
-  assert_content_type "tts_to_audio_alias" "audio"
-  assert_file_min_size "tts_to_audio_alias" 200
+  # TTS endpoint
+  run_request "tts_to_audio" "POST" "/tts_to_audio" "${tts_payload}" "binary"
+  assert_content_type "tts_to_audio" "audio"
+  assert_file_min_size "tts_to_audio" 200
 
   # Whisper endpoints
   run_request "whisper_load_get" "GET" "/load"
