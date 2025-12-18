@@ -34,6 +34,10 @@ We ship the same tooling as `chutes-jumpmaster`, pre-configured for the SkyrimNe
 
 ### Platform Context
 Chutes behaves like a less restrictive, GPU-aware AWS Lambda. Containers stay warm, keep caches, and expose arbitrary HTTP routes. The router expects JSON payloads today, so XTTS/Whisper workflows must wrap audio bytes (base64) or add a thin proxy that converts legacy `multipart/form-data` into JSON.
+
+**User Siloing & Resilience:**
+- **Cache Siloing:** Every request is automatically "siloed" by user. The chute extracts the `X-Chutes-UserID` header, hashes it, and prefixes speaker names/latents. This allows multiple users to share one public chute while keeping their cloned voices and temporary files separate.
+- **Path Resilience:** Critical endpoints support both trailing slashes (e.g., `/tts_to_audio/`) and standard formats (e.g., `/tts_to_audio`) to accommodate varying client implementations (like `XTTSInterface.cpp`).
 - **Future direction:** Images can also emit JSON-wrapped audio, which unlocks multipart-style flows without waiting on router changes.
 
 ---

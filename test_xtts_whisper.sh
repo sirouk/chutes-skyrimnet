@@ -343,10 +343,51 @@ PY
   run_request "create_and_store_latents" "POST" "/create_and_store_latents" "${latents_payload}"
   assert_json_keys "create_and_store_latents" "file_path"
 
-  # TTS endpoint (with trailing slash to match XTTSInterface.cpp)
-  run_request "tts_to_audio" "POST" "/tts_to_audio/" "${tts_payload}" "binary"
-  assert_content_type "tts_to_audio" "audio"
-  assert_file_min_size "tts_to_audio" 200
+  # Additional XTTS cords
+  run_request "speakers" "GET" "/speakers"
+  run_request "get_folders" "GET" "/get_folders"
+  run_request "get_models_list" "GET" "/get_models_list"
+  run_request "get_tts_settings" "GET" "/get_tts_settings"
+  
+  local set_output_payload="${TMP_DIR}/set_output.json"
+  echo '{"output_folder": "/app/output"}' > "${set_output_payload}"
+  run_request "set_output" "POST" "/set_output" "${set_output_payload}"
+  
+  local set_speaker_payload="${TMP_DIR}/set_speaker_folder.json"
+  echo '{"speaker_folder": "speakers/"}' > "${set_speaker_payload}"
+  run_request "set_speaker_folder" "POST" "/set_speaker_folder" "${set_speaker_payload}"
+  
+  local switch_model_payload="${TMP_DIR}/switch_model.json"
+  echo '{"model_name": "v2.0.2"}' > "${switch_model_payload}"
+  run_request "switch_model" "POST" "/switch_model" "${switch_model_payload}"
+  
+  local set_tts_payload="${TMP_DIR}/set_tts_settings.json"
+  echo '{"temperature": 0.75}' > "${set_tts_payload}"
+  run_request "set_tts_settings" "POST" "/set_tts_settings" "${set_tts_payload}"
+
+  run_request "create_latents" "POST" "/create_latents" "${latents_payload}"
+  
+  local store_latents_payload="${TMP_DIR}/store_latents.json"
+  # Use python to extract latents from previous response
+  "${PY_BIN}" - "$(body_path create_latents)" "${store_latents_payload}" <<'PY'
+import json, pathlib, sys
+data = json.loads(pathlib.Path(sys.argv[1]).read_text())
+payload = {"language": "en", "speaker_name": "malebrute", "latents": data["latents"]}
+pathlib.Path(sys.argv[2]).write_text(json.dumps(payload))
+PY
+  run_request "store_latents" "POST" "/store_latents" "${store_latents_payload}"
+  assert_store_latents_ok
+
+  run_request "tts_to_file" "POST" "/tts_to_file" "${tts_payload}"
+  assert_json_keys "tts_to_file" "file_path"
+
+  # TTS endpoint (testing both slashed and non-slashed alias)
+  run_request "tts_to_audio_slashed" "POST" "/tts_to_audio/" "${tts_payload}" "binary"
+  assert_content_type "tts_to_audio_slashed" "audio"
+  
+  run_request "tts_to_audio_alias" "POST" "/tts_to_audio" "${tts_payload}" "binary"
+  assert_content_type "tts_to_audio_alias" "audio"
+  assert_file_min_size "tts_to_audio_alias" 200
 
   # Whisper endpoints
   run_request "whisper_load_get" "GET" "/load"

@@ -28,9 +28,9 @@ build/
 .vscode/
 
 # Chutes Repo
-chutes/
-chutes-api/
-chutes-miner/
+# chutes/
+# chutes-api/
+# chutes-miner/
 
 new_requests.txt
 XTTSInterface.cpp
