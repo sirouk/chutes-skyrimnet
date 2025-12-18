@@ -187,7 +187,7 @@ register_service_launcher(chute, ENTRYPOINT, SERVICE_PORTS, timeout=120, soft_fa
 
 
 # -----------------------------------------------------------------------------
-# XTTS GET Cords (port 8020)
+# XTTS Cords (port 8020)
 # -----------------------------------------------------------------------------
 
 @chute.cord(public_api_path="/speakers_list", public_api_method="GET")
@@ -195,73 +195,20 @@ async def speakers_list(self, args: dict) -> Any:
     return await _proxy_get(XTTS_BASE, "/speakers_list")
 
 
-@chute.cord(public_api_path="/speakers", public_api_method="GET")
-async def speakers(self, args: dict) -> Any:
-    return await _proxy_get(XTTS_BASE, "/speakers")
-
-
 @chute.cord(public_api_path="/languages", public_api_method="GET")
 async def languages(self, args: dict) -> Any:
     return await _proxy_get(XTTS_BASE, "/languages")
 
 
-@chute.cord(public_api_path="/get_folders", public_api_method="GET")
-async def get_folders(self, args: dict) -> Any:
-    return await _proxy_get(XTTS_BASE, "/get_folders")
-
-
-@chute.cord(public_api_path="/get_models_list", public_api_method="GET")
-async def get_models_list(self, args: dict) -> Any:
-    return await _proxy_get(XTTS_BASE, "/get_models_list")
-
-
-@chute.cord(public_api_path="/get_tts_settings", public_api_method="GET")
-async def get_tts_settings(self, args: dict) -> Any:
-    return await _proxy_get(XTTS_BASE, "/get_tts_settings")
-
-
-# -----------------------------------------------------------------------------
-# XTTS POST Cords (port 8020) - JSON to Multipart
-# -----------------------------------------------------------------------------
-
-@chute.cord(public_api_path="/set_output", public_api_method="POST")
-async def set_output(self, args: dict) -> Any:
-    return await _proxy_post_json(XTTS_BASE, "/set_output", args or {})
-
-
-@chute.cord(public_api_path="/set_speaker_folder", public_api_method="POST")
-async def set_speaker_folder(self, args: dict) -> Any:
-    return await _proxy_post_json(XTTS_BASE, "/set_speaker_folder", args or {})
-
-
-@chute.cord(public_api_path="/switch_model", public_api_method="POST")
-async def switch_model(self, args: dict) -> Any:
-    return await _proxy_post_json(XTTS_BASE, "/switch_model", args or {})
-
-
-@chute.cord(public_api_path="/set_tts_settings", public_api_method="POST")
-async def set_tts_settings_post(self, args: dict) -> Any:
-    return await _proxy_post_json(XTTS_BASE, "/set_tts_settings", args or {})
-
-
-@chute.cord(public_api_path="/tts_to_audio", public_api_method="POST", output_content_type="audio/wav")
+@chute.cord(public_api_path="/tts_to_audio/", public_api_method="POST", output_content_type="audio/wav")
 async def tts_to_audio(self, args: dict) -> Response:
-    return await _proxy_post_json(XTTS_BASE, "/tts_to_audio/", args or {})
-
-
-@chute.cord(public_api_path="/tts_to_file", public_api_method="POST")
-async def tts_to_file(self, args: dict) -> Any:
-    return await _proxy_post_json(XTTS_BASE, "/tts_to_file", args or {})
-
-
-@chute.cord(public_api_path="/create_latents", public_api_method="POST")
-async def create_latents(self, args: dict) -> Any:
-    return await _proxy_post_multipart(XTTS_BASE, "/create_latents", args or {})
-
-
-@chute.cord(public_api_path="/store_latents", public_api_method="POST")
-async def store_latents(self, args: dict) -> Any:
-    return await _proxy_post_json(XTTS_BASE, "/store_latents", args or {})
+    """
+    Generate audio from text. Expects:
+      - text: str
+      - language: str
+      - speaker_wav: str (voice name or path to latents)
+    """
+    return await _proxy_post_multipart(XTTS_BASE, "/tts_to_audio/", args or {})
 
 
 @chute.cord(public_api_path="/create_and_store_latents", public_api_method="POST")

@@ -138,29 +138,10 @@ assert_no_error_field() {
 import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
 data = json.loads(path.read_text())
-if isinstance(data, dict):
+  if isinstance(data, dict):
     for key in ("error", "detail"):
         if key in data:
             raise SystemExit(f"{sys.argv[2]} returned error payload: {data[key]!r}")
-PY
-}
-
-assert_store_latents_ok() {
-  local file
-  file="$(body_path "store_latents")"
-  "${PY_BIN}" - "$file" <<'PY'
-import json, pathlib, sys
-path = pathlib.Path(sys.argv[1])
-data = json.loads(path.read_text())
-if "message" in data:
-    sys.exit(0)
-detail = data.get("detail")
-if isinstance(detail, list):
-    for entry in detail:
-        if entry.get("type") == "model_attributes_type":
-            print("WARN: store_latents returned legacy detail payload; continuing", file=sys.stderr)
-            sys.exit(0)
-raise SystemExit("store_latents returned unexpected payload")
 PY
 }
 
@@ -348,55 +329,9 @@ main() {
 
   # Discovery endpoints
   run_request "speakers_list" "GET" "/speakers_list"
-  run_request "speakers" "GET" "/speakers"
   run_request "languages" "GET" "/languages"
-  run_request "get_folders" "GET" "/get_folders"
-  assert_json_keys "get_folders" "speaker_folder" "output_folder" "model_folder"
-  run_request "get_models_list" "GET" "/get_models_list"
-  run_request "get_tts_settings" "GET" "/get_tts_settings"
-  assert_json_keys "get_tts_settings" "temperature" "speed" "enable_text_splitting"
 
-  # Derived payloads for stateful POST routes
-  local folders_body models_body settings_body
-  folders_body="$(body_path get_folders)"
-  models_body="$(body_path get_models_list)"
-  settings_body="$(body_path get_tts_settings)"
-
-  local set_output_payload="${TMP_DIR}/set_output.json"
-  "${PY_BIN}" - <<'PY' "${folders_body}" "${set_output_payload}"
-import json, pathlib, sys
-folders = json.loads(pathlib.Path(sys.argv[1]).read_text())
-payload = {"output_folder": folders.get("output_folder") or "/app/output"}
-pathlib.Path(sys.argv[2]).write_text(json.dumps(payload))
-PY
-
-  local set_speaker_payload="${TMP_DIR}/set_speaker_folder.json"
-  "${PY_BIN}" - <<'PY' "${folders_body}" "${set_speaker_payload}"
-import json, pathlib, sys
-folders = json.loads(pathlib.Path(sys.argv[1]).read_text())
-payload = {"speaker_folder": folders.get("speaker_folder") or "speakers/"}
-pathlib.Path(sys.argv[2]).write_text(json.dumps(payload))
-PY
-
-  local switch_model_payload="${TMP_DIR}/switch_model.json"
-  "${PY_BIN}" - <<'PY' "${models_body}" "${switch_model_payload}"
-import json, pathlib, sys
-models = json.loads(pathlib.Path(sys.argv[1]).read_text() or "[]")
-model = "v2.0.2"
-if isinstance(models, list) and models:
-    model = models[0]
-pathlib.Path(sys.argv[2]).write_text(json.dumps({"model_name": model}))
-PY
-
-  local set_tts_payload="${TMP_DIR}/set_tts_settings.json"
-  "${PY_BIN}" - <<'PY' "${settings_body}" "${set_tts_payload}"
-import json, pathlib, sys
-settings = json.loads(pathlib.Path(sys.argv[1]).read_text())
-temperature = settings.get("temperature", 0.7)
-settings["temperature"] = round(min(temperature + 0.05, 1.5), 3)
-pathlib.Path(sys.argv[2]).write_text(json.dumps(settings))
-PY
-
+  # Derived payloads
   local whisper_model_name="${WHISPER_MODEL:-large-v3-turbo}"
   local whisper_load_payload="${TMP_DIR}/whisper_load.json"
   "${PY_BIN}" - <<'PY' "${whisper_load_payload}" "${whisper_model_name}"
@@ -404,39 +339,14 @@ import json, pathlib, sys
 pathlib.Path(sys.argv[1]).write_text(json.dumps({"model": sys.argv[2]}))
 PY
 
-  run_request "set_output" "POST" "/set_output" "${set_output_payload}"
-  assert_json_keys "set_output" "message"
-  run_request "set_speaker_folder" "POST" "/set_speaker_folder" "${set_speaker_payload}"
-  assert_json_keys "set_speaker_folder" "message"
-  run_request "switch_model" "POST" "/switch_model" "${switch_model_payload}"
-  run_request "set_tts_settings" "POST" "/set_tts_settings" "${set_tts_payload}"
-  assert_json_keys "set_tts_settings" "message"
-
-  # Latent management flows
-  run_request "create_latents" "POST" "/create_latents" "${latents_payload}"
-  assert_json_keys "create_latents" "latents"
-  local store_latents_payload="${TMP_DIR}/store_latents.json"
-  "${PY_BIN}" - <<'PY' "$(body_path create_latents)" "${store_latents_payload}" "${LANGUAGE}" "${SPEAKER_NAME}"
-import json, pathlib, sys
-body_path, dest_path, language, speaker = sys.argv[1:5]
-data = json.loads(pathlib.Path(body_path).read_text())
-latents = data.get("latents")
-if latents is None:
-    raise SystemExit("create_latents response missing 'latents'")
-payload = {"language": language, "speaker_name": speaker, "latents": latents}
-pathlib.Path(dest_path).write_text(json.dumps(payload))
-PY
-  run_request "store_latents" "POST" "/store_latents" "${store_latents_payload}"
-  assert_store_latents_ok
+  # Latent management flow
   run_request "create_and_store_latents" "POST" "/create_and_store_latents" "${latents_payload}"
   assert_json_keys "create_and_store_latents" "file_path"
 
-  # TTS endpoints
-  run_request "tts_to_audio" "POST" "/tts_to_audio" "${tts_payload}" "binary"
+  # TTS endpoint (with trailing slash to match XTTSInterface.cpp)
+  run_request "tts_to_audio" "POST" "/tts_to_audio/" "${tts_payload}" "binary"
   assert_content_type "tts_to_audio" "audio"
   assert_file_min_size "tts_to_audio" 200
-  run_request "tts_to_file" "POST" "/tts_to_file" "${tts_payload}"
-  assert_json_keys "tts_to_file" "file_path"
 
   # Whisper endpoints
   run_request "whisper_load_get" "GET" "/load"
