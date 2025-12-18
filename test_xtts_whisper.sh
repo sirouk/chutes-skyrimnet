@@ -138,10 +138,24 @@ assert_no_error_field() {
 import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
 data = json.loads(path.read_text())
-  if isinstance(data, dict):
+if isinstance(data, dict):
     for key in ("error", "detail"):
         if key in data:
             raise SystemExit(f"{sys.argv[2]} returned error payload: {data[key]!r}")
+PY
+}
+
+assert_store_latents_ok() {
+  local name="store_latents"
+  local file
+  file="$(body_path "${name}")"
+  "${PY_BIN}" - "$file" "$name" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+data = json.loads(path.read_text())
+# Upstream may return {"message": "..."} or {"detail": "..."} (legacy)
+if "message" not in data and "detail" not in data:
+    raise SystemExit(f"{sys.argv[2]} missing success message/detail keys: {list(data.keys())}")
 PY
 }
 
