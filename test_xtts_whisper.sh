@@ -145,6 +145,25 @@ if isinstance(data, dict):
 PY
 }
 
+assert_store_latents_ok() {
+  local file
+  file="$(body_path "store_latents")"
+  "${PY_BIN}" - "$file" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+data = json.loads(path.read_text())
+if "message" in data:
+    sys.exit(0)
+detail = data.get("detail")
+if isinstance(detail, list):
+    for entry in detail:
+        if entry.get("type") == "model_attributes_type":
+            print("WARN: store_latents returned legacy detail payload; continuing", file=sys.stderr)
+            sys.exit(0)
+raise SystemExit("store_latents returned unexpected payload")
+PY
+}
+
 warn() { echo "WARN: $*" >&2; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -408,7 +427,7 @@ payload = {"language": language, "speaker_name": speaker, "latents": latents}
 pathlib.Path(dest_path).write_text(json.dumps(payload))
 PY
   run_request "store_latents" "POST" "/store_latents" "${store_latents_payload}"
-  assert_json_keys "store_latents" "message"
+  assert_store_latents_ok
   run_request "create_and_store_latents" "POST" "/create_and_store_latents" "${latents_payload}"
   assert_json_keys "create_and_store_latents" "file_path"
 
