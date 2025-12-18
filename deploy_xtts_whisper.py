@@ -36,7 +36,7 @@ chutes_config.read(os.path.expanduser("~/.chutes/config.ini"))
 USERNAME = os.getenv("CHUTES_USERNAME") or chutes_config.get("auth", "username", fallback="chutes")
 
 CHUTE_NAME = "xtts-whisper"
-CHUTE_TAG = "tts-stt-v0.1.22"
+CHUTE_TAG = "tts-stt-v0.1.23"
 CHUTE_BASE_IMAGE = "elbios/xtts-whisper:latest"
 CHUTE_PYTHON_VERSION = "3.11"
 CHUTE_GPU_COUNT = 1
@@ -157,6 +157,12 @@ async def _consume_response(resp: aiohttp.ClientResponse, url: str) -> Any:
 
     if resp.status >= 400:
         detail = parsed_json if parsed_json is not None else body.decode("utf-8", errors="replace")
+        
+        # Handle "already loaded" idempotently
+        if resp.status == 400 and isinstance(detail, dict) and "already loaded" in str(detail.get("detail", "")).lower():
+            logger.info(f"Model already loaded at {url}, returning success.")
+            return {"message": "Model already loaded", "detail": detail.get("detail")}
+
         logger.warning(f"Upstream {url} returned {resp.status}: {detail}")
         raise HTTPException(status_code=resp.status, detail=detail)
 

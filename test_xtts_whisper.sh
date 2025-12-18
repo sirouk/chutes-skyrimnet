@@ -373,6 +373,7 @@ PY
   
   local switch_model_payload="${TMP_DIR}/switch_model.json"
   echo '{"model_name": "v2.0.2"}' > "${switch_model_payload}"
+  # This may return 200 (newly loaded) or a graceful 200 from our proxy if already loaded
   run_request "switch_model" "POST" "/switch_model" "${switch_model_payload}"
   
   local set_tts_payload="${TMP_DIR}/set_tts_settings.json"
