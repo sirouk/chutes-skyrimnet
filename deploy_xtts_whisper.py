@@ -36,7 +36,7 @@ chutes_config.read(os.path.expanduser("~/.chutes/config.ini"))
 USERNAME = os.getenv("CHUTES_USERNAME") or chutes_config.get("auth", "username", fallback="chutes")
 
 CHUTE_NAME = "xtts-whisper"
-CHUTE_TAG = "tts-stt-v0.1.23"
+CHUTE_TAG = "tts-stt-v0.1.30"
 CHUTE_BASE_IMAGE = "elbios/xtts-whisper:latest"
 CHUTE_PYTHON_VERSION = "3.11"
 CHUTE_GPU_COUNT = 1
@@ -47,8 +47,8 @@ CHUTE_CONCURRENCY = 6
 SERVICE_PORTS = [8020, 8080]
 ENTRYPOINT = "/usr/local/bin/docker-entrypoint.sh"
 
-XTTS_BASE = "http://127.0.0.1:8020"
-WHISPER_BASE = "http://127.0.0.1:8080"
+XTTS_BASE = "http://localhost:8020"
+WHISPER_BASE = "http://localhost:8080"
 
 CHUTE_ENV = {
     "WHISPER_MODEL": "large-v3-turbo",
@@ -108,10 +108,19 @@ chute = Chute(
 
 @chute.middleware("http")
 async def add_user_id_to_context(request: Request, call_next):
-    """Middleware to capture user ID for siloing."""
-    user_id = request.headers.get("X-Chutes-UserID", "default")
+    """Middleware to capture Silo ID for siloing."""
+    # Users should provide 'silo_id' in query params or as a header (if using SDK).
+    # Note: Authorization and X-Chutes-UserID headers are stripped by the gateway.
+    user_id = request.query_params.get("silo_id")
+    if not user_id:
+        user_id = request.headers.get("X-Silo-ID", "default")
+
     token = _user_id_context.set(user_id)
     try:
+        # Standardize paths by stripping trailing slashes for routing
+        path = request.url.path
+        if path != "/" and path.endswith("/"):
+            request.scope["path"] = path.rstrip("/")
         return await call_next(request)
     finally:
         _user_id_context.reset(token)
@@ -157,13 +166,17 @@ async def _consume_response(resp: aiohttp.ClientResponse, url: str) -> Any:
 
     if resp.status >= 400:
         detail = parsed_json if parsed_json is not None else body.decode("utf-8", errors="replace")
-        
-        # Handle "already loaded" idempotently
-        if resp.status == 400 and isinstance(detail, dict) and "already loaded" in str(detail.get("detail", "")).lower():
-            logger.info(f"Model already loaded at {url}, returning success.")
-            return {"message": "Model already loaded", "detail": detail.get("detail")}
-
         logger.warning(f"Upstream {url} returned {resp.status}: {detail}")
+        # If it's a 5xx from upstream, we turn it into a 429 to avoid the platform killing this instance.
+        if resp.status >= 500:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": "UpstreamError",
+                    "upstream_status": resp.status,
+                    "message": f"Upstream service returned error: {detail}",
+                },
+            )
         raise HTTPException(status_code=resp.status, detail=detail)
 
     if parsed_json is not None:
@@ -175,9 +188,29 @@ async def _consume_response(resp: aiohttp.ClientResponse, url: str) -> Any:
 async def _proxy_get(base: str, path: str, params: dict = None) -> Any:
     """Simple GET proxy returning JSON or raw bytes wrapped in Response."""
     url = f"{base}{path}"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params) as resp:
-            return await _consume_response(resp, url)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params) as resp:
+                return await _consume_response(resp, url)
+    except aiohttp.ClientError as e:
+        logger.error(f"Connection error to upstream {url}: {e}")
+        # Use 429 to signal "busy/starting" so platform doesn't kill us
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "UpstreamUnreachable",
+                "message": f"Upstream service at {url} is starting or unreachable: {e}",
+            },
+        )
+    except Exception as e:
+        logger.exception(f"Unexpected error proxying GET {url}")
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "InternalProxyError",
+                "message": f"Unexpected error proxying request: {str(e)}",
+            },
+        )
 
 
 def _get_user_id() -> str:
@@ -196,35 +229,82 @@ async def _proxy_post_multipart(base: str, path: str, payload: dict) -> Any:
     """POST with JSON->multipart conversion, return JSON or raw bytes wrapped in Response."""
     url = f"{base}{path}"
     
-    # Silo speaker folder if user ID is available
-    if "speaker_name" in payload:
+    try:
+        # Silo speaker folder if user ID is available
         user_silo = _get_user_id()
-        payload["speaker_name"] = f"{user_silo}_{payload['speaker_name']}"
-        logger.debug(f"Siloing speaker to: {payload['speaker_name']}")
+        if "speaker_name" in payload:
+            payload["speaker_name"] = f"{user_silo}_{payload['speaker_name']}"
+            logger.debug(f"Siloing speaker_name to: {payload['speaker_name']}")
+        if "speaker_wav" in payload:
+            # Only prefix if it's a name, not a path or latent id
+            if not payload["speaker_wav"].startswith("/") and "|" not in payload["speaker_wav"]:
+                payload["speaker_wav"] = f"{user_silo}_{payload['speaker_wav']}"
+            logger.debug(f"Siloing speaker_wav to: {payload['speaker_wav']}")
 
-    form = _encode_multipart(payload)
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, data=form) as resp:
-            return await _consume_response(resp, url)
+        form = _encode_multipart(payload)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, data=form) as resp:
+                return await _consume_response(resp, url)
+    except aiohttp.ClientError as e:
+        logger.error(f"Connection error to upstream {url}: {e}")
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "UpstreamUnreachable",
+                "message": f"Upstream service at {url} is starting or unreachable: {e}",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Unexpected error proxying POST (multipart) {url}")
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "InternalProxyError",
+                "message": f"Unexpected error proxying request: {str(e)}",
+            },
+        )
 
 
 async def _proxy_post_json(base: str, path: str, payload: dict) -> Any:
     """POST with JSON body (for endpoints that accept JSON)."""
     url = f"{base}{path}"
 
-    # Silo speaker name/wav
-    user_silo = _get_user_id()
-    if "speaker_name" in payload:
-        payload["speaker_name"] = f"{user_silo}_{payload['speaker_name']}"
-    if "speaker_wav" in payload:
-        # Only prefix if it's a name, not a path or latent id
-        if not payload["speaker_wav"].startswith("/") and "|" not in payload["speaker_wav"]:
-            payload["speaker_wav"] = f"{user_silo}_{payload['speaker_wav']}"
-    logger.debug(f"Siloing payload keys for user {user_silo}")
+    try:
+        # Silo speaker name/wav
+        user_silo = _get_user_id()
+        if "speaker_name" in payload:
+            payload["speaker_name"] = f"{user_silo}_{payload['speaker_name']}"
+        if "speaker_wav" in payload:
+            # Only prefix if it's a name, not a path or latent id
+            if not payload["speaker_wav"].startswith("/") and "|" not in payload["speaker_wav"]:
+                payload["speaker_wav"] = f"{user_silo}_{payload['speaker_wav']}"
+        logger.debug(f"Siloing payload keys for user {user_silo}")
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload) as resp:
-            return await _consume_response(resp, url)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload) as resp:
+                return await _consume_response(resp, url)
+    except aiohttp.ClientError as e:
+        logger.error(f"Connection error to upstream {url}: {e}")
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "UpstreamUnreachable",
+                "message": f"Upstream service at {url} is starting or unreachable: {e}",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Unexpected error proxying POST (json) {url}")
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "InternalProxyError",
+                "message": f"Unexpected error proxying request: {str(e)}",
+            },
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -236,7 +316,7 @@ async def _proxy_post_json(base: str, path: str, payload: dict) -> Any:
 # -----------------------------------------------------------------------------
 # Startup: launch XTTS + Whisper services
 # -----------------------------------------------------------------------------
-register_service_launcher(chute, ENTRYPOINT, SERVICE_PORTS, timeout=120, soft_fail=True)
+register_service_launcher(chute, ENTRYPOINT, SERVICE_PORTS, timeout=300, soft_fail=True)
 
 
 # -----------------------------------------------------------------------------
@@ -308,9 +388,19 @@ async def tts_to_audio(self, args: dict) -> Response:
     return await _proxy_post_multipart(XTTS_BASE, "/tts_to_audio", args or {})
 
 
+@chute.cord(public_api_path="/tts_to_audio/", public_api_method="POST", output_content_type="audio/wav")
+async def tts_to_audio_slash(self, args: dict) -> Response:
+    return await self.tts_to_audio(args)
+
+
 @chute.cord(public_api_path="/tts_to_file", public_api_method="POST")
 async def tts_to_file(self, args: dict) -> Any:
     return await _proxy_post_multipart(XTTS_BASE, "/tts_to_file", args or {})
+
+
+@chute.cord(public_api_path="/tts_to_file/", public_api_method="POST")
+async def tts_to_file_slash(self, args: dict) -> Any:
+    return await self.tts_to_file(args)
 
 
 @chute.cord(public_api_path="/create_latents", public_api_method="POST")
