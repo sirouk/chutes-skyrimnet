@@ -1365,82 +1365,82 @@ do_check_logs() {
     local base_url
     base_url=$(get_api_base_url)
 
-    # Get chute JSON and extract instances (avoid pipes to keep output intact)
-    local tmp_output
-    tmp_output=$(mktemp)
-    chutes chutes get "$chute_name" >"$tmp_output" 2>&1 || true
+    while true; do
+        # Get chute JSON and extract instances
+        local tmp_output
+        tmp_output=$(mktemp)
+        if ! chutes chutes get "$chute_name" >"$tmp_output" 2>&1; then
+            print_error "Failed to get chute info for $chute_name"
+            rm -f "$tmp_output"
+            sleep 5
+            continue
+        fi
 
-    local interactive_mode="nontty"
-    if [[ -t 0 ]]; then
-        interactive_mode="tty"
-    fi
-
-    local instance_id
-    instance_id=$(python - "$tmp_output" "$interactive_mode" <<'PYCODE' || true
+        local instance_ids
+        instance_ids=$(python3 - "$tmp_output" <<'PYCODE'
 import json, re, sys
 path = sys.argv[1]
-interactive = sys.argv[2] if len(sys.argv) > 2 else "nontty"
 try:
-    text = open(path, encoding="utf-8", errors="replace").read()
+    with open(path, encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    match = re.search(r'\{[\s\S]*\}', text)
+    if not match:
+        sys.exit(0)
+    data = json.loads(match.group())
+    instances = data.get("instances") or []
+    if not instances:
+        sys.exit(0)
+    
+    def sort_key(inst):
+        # Prefer active and verified instances
+        return (not inst.get("active", False), not inst.get("verified", False), inst.get("last_verified_at") or "")
+    
+    instances = sorted(instances, key=sort_key)
+    print("\n".join(inst["instance_id"] for inst in instances))
 except Exception:
-    sys.exit(1)
-match = re.search(r'\{[\s\S]*\}', text)
-if not match:
-    sys.exit(1)
-data = json.loads(match.group())
-instances = data.get("instances") or []
-if not instances:
-    sys.exit(1)
-def sort_key(inst):
-    return (not inst.get("active", False), not inst.get("verified", False), inst.get("last_verified_at") or "")
-instances = sorted(instances, key=sort_key)
-if len(instances) == 1:
-    print(instances[0]["instance_id"])
     sys.exit(0)
-print("\nInstances:", file=sys.stderr)
-for i, inst in enumerate(instances, 1):
-    print(f"  {i}) {inst.get('instance_id')}  active={inst.get('active')} verified={inst.get('verified')}", file=sys.stderr)
-if interactive != "tty":
-    idx = 0
-else:
-    try:
-        prompt = f"Select instance (1-{len(instances)}) [1]: "
-        sys.stderr.write(prompt)
-        sys.stderr.flush()
-        choice = sys.stdin.readline().strip()
-    except EOFError:
-        choice = ""
-    if not choice:
-        idx = 0
-    else:
-        try:
-            idx = int(choice) - 1
-        except ValueError:
-            sys.exit(1)
-        if idx < 0 or idx >= len(instances):
-            idx = 0
-print(instances[idx]["instance_id"])
 PYCODE
 )
-    rm -f "$tmp_output"
+        rm -f "$tmp_output"
 
-    if [[ -z "$instance_id" ]]; then
-        print_error "No instances available for $chute_name"
-        return 1
-    fi
+        if [[ -z "$instance_ids" ]]; then
+            print_warning "No instances found for $chute_name. Retrying in 3s..."
+            sleep 3
+            continue
+        fi
 
-    print_info "Streaming logs from instance: $instance_id"
-    local logs_url="${base_url}/instances/${instance_id}/logs"
-    print_cmd "curl -N -H \"Authorization: Bearer <redacted>\" \"$logs_url\""
-    echo ""
-    set +e
-    curl -N -H "Authorization: Bearer ${api_key}" "$logs_url"
-    local curl_status=$?
-    set -e
-    if [[ $curl_status -ne 0 ]]; then
-        print_warning "curl exited with status $curl_status"
-    fi
-    return 0
+        mapfile -t ids_array <<< "$instance_ids"
+        print_info "Found ${#ids_array[@]} instance(s). Iterating to find available logs..."
+
+        local found_logs=false
+        for instance_id in "${ids_array[@]}"; do
+            [[ -z "$instance_id" ]] && continue
+            
+            print_info "Checking logs for instance: $instance_id"
+            local logs_url="${base_url}/instances/${instance_id}/logs"
+            
+            # We use --fail to make curl return non-zero on 4xx/5xx
+            # We also want to see if it starts streaming. 
+            # If it fails immediately, we try next.
+            set +e
+            curl --fail -N -H "Authorization: Bearer ${api_key}" "$logs_url"
+            local curl_status=$?
+            set -e
+            
+            if [[ $curl_status -eq 0 ]]; then
+                # If curl exited with 0, it means it completed or was interrupted by user.
+                # If it was interrupted (Ctrl+C), we should exit the script.
+                # In most shells, Ctrl+C sends SIGINT to the foreground process group.
+                # If the user stopped it, we are done.
+                return 0
+            fi
+            
+            print_warning "Logs unavailable for $instance_id (exit $curl_status). Trying next..."
+        done
+        
+        print_warning "All instances checked, none providing logs. Restarting search in 3s..."
+        sleep 3
+    done
 }
 
 select_chute_for_warmup() {
